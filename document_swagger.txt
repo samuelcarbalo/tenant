@@ -1,0 +1,893 @@
+openapi: 3.0.3
+info:
+  title: 81 Pass Checker API
+  description: |
+    ## Visión General
+    **81 Pass Checker** es una plataforma de **Verifiable Credentials (VC)** y motor de elegibilidad en tiempo real que permite a organizaciones emisoras validar credenciales digitales W3C y evaluar la elegibilidad de usuarios mediante lógica de negocio declarativa.
+
+    ### Arquitectura Core
+    - **Motor de Decisión**: Evaluación de condiciones complejas (certificados, cursos, atributos biométricos, temporalidad) contra credenciales verificables
+    - **Gestión de Ciclo de Vida**: Emisión, validación, revocación y auditoría de credenciales con trazabilidad completa
+    - **Autorización Granular**: Control de acceso basado en roles (RBAC) para emisores verificados
+
+    ### Casos de Uso Principales
+    - Verificación de identidad descentralizada (DID)
+    - Elegibilidad para beneficios gubernamentales o corporativos
+    - Acceso condicional a servicios basado en atributos verificables
+    - Cumplimiento normativo KYC/AML con pruebas de vida (liveness detection)
+
+    ### Seguridad & Compliance
+    - Autenticación mediante API Keys con rotación automática
+    - Encriptación en tránsito (TLS 1.3) y en reposo (AES-256)
+    - Trazabilidad completa mediante logs inmutables (append-only)
+    - Cumplimiento W3C Verifiable Credentials Data Model 2.0
+
+    ### Rate Limits 
+    - **Tier Estándar**: 100 req/min por emisor
+    - **Tier Enterprise**: 1000 req/min con burst allowance
+    - **Retry-After**: Incluido en headers de respuesta 429
+
+  version: 1.0.0
+  contact:
+    name: Soporte Técnico 81 Pass
+    email: api-support@81pass.io
+    url: https://docs.81pass.io/support
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  x-api-id: 81pass-checker-v1
+  x-audience: external-public
+
+servers:
+  - url: https://api.81pass.io/v1
+    description: Producción (Global CDN)
+  - url: https://staging-api.81pass.io/v1
+    description: Staging (Pre-producción)
+  - url: https://0ui4qsrfu6.execute-api.us-east-1.amazonaws.com/Prod
+    description: Legacy Endpoint (Deprecado - Migración requerida antes 2025-Q3)
+    x-deprecated: true
+
+security:
+  - ApiKeyAuth: []
+  - BearerAuth: []
+
+tags:
+  - name: Autenticación
+    description: |
+      Gestión de identidad y permisos de emisores. Todas las operaciones requieren 
+      validación previa contra el registro de emisores verificados en DynamoDB.
+  - name: Motor de Elegibilidad
+    description: |
+      nucleo del sistema checker. Evaluación dinámica de reglas de negocio contra credenciales 
+      verificables mediante motor de inferencia probabilística.
+  - name: Gestión de Credenciales
+    description: |
+      Ciclo de vida completo de Verifiable Credentials (VC): emisión, validación criptográfica, 
+      revocación con listas de revocación verificables (VC-RL), y verificación de estado.
+  - name: Auditoría & Trazabilidad
+    description: |
+      Sistema de logs inmutables para cumplimiento normativo. Todos los eventos de la API 
+      se registran con hash criptográfico para garantizar integridad.
+
+paths:
+  /auth/validate:
+    post:
+      summary: Validar Emisor y Permisos de Acceso
+      description: |
+        Autentica y autoriza a un emisor (organización o usuario individual) verificando 
+        su existencia en el registro de emisores autorizados y el estado activo de sus permisos.
+
+        ### Flujo de Autorización
+        1. **Validación de API Key**: Verificación de firma HMAC-SHA256
+        2. **Lookup en DynamoDB**: Consulta de emisor por `issuer_id`
+        3. **Verificación de Permisos**: Chequeo de scopes requeridos para el endpoint solicitado
+        4. **Rate Limit Check**: Validación de cuota disponible
+
+        ### Respuestas de Error Comunes
+        - `403 Forbidden`: Emisor existe pero no tiene permisos para el recurso solicitado
+        - `401 Unauthorized`: API Key inválida o expirada
+        - `429 Too Many Requests`: Límite de rate limit excedido
+      tags:
+        - Autenticación
+      operationId: validateIssuer
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Emisor autorizado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+              example:
+                issuer_id: "org_2vPqN5LwX8kT"
+                status: "active"
+                permissions: ["credentials:read", "engine:execute"]
+                rate_limit_tier: "enterprise"
+                expires_at: "2025-12-31T23:59:59Z"
+          headers:
+            X-RateLimit-Limit:
+              schema:
+                type: integer
+              description: Límite de peticiones por minuto
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+              description: Peticiones restantes en la ventana actual
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "429":
+          $ref: "#/components/responses/RateLimitError"
+
+  /engine/checker:
+    post:
+      summary: Ejecutar Motor de Elegibilidad (Eligibility Engine)
+      description: |
+        Evalúa un conjunto de condiciones complejas contra las credenciales verificables 
+        de un usuario específico para determinar elegibilidad en tiempo real.
+
+        ### Lógica de Evaluación
+        El motor procesa condiciones como predicados lógicos soportando:
+        - **Atributos demográficos**: Edad, nacionalidad, residencia
+        - **Credenciales temporales**: Fechas de emisión/expiración, validez de pruebas de vida
+        - **Credenciales de Carrera**: Certificados, cursos etc.
+        - **Credenciales de Identidad**: Email, Telefono etc.
+        - **Composición lógica**: AND/OR/NOT anidados
+
+        ### Algoritmo de Matching
+        1. **Resolución de DID**: Identificación descentralizada del usuario
+        2. **Recuperación de VC**: Query a almacenamiento cifrado de credenciales
+        3. **Verificación criptográfica**: Validación de firmas de emisor
+        4. **Evaluación de reglas**: Aplicación de motor de decisión
+        5. **Generación de prueba**: Creación de Verifiable Presentation (VP) opcional
+
+        ### Ejemplo de Condición Compleja
+        ```json
+        {
+          "operator": "AND",
+          "conditions": [
+            {"field": "credential.type", "operator": "eq", "value": "NationalID"},
+            {"field": "claims.age", "operator": "gte", "value": 18},
+            {"field": "metadata.liveness_check", "operator": "lt", "value": "24h"}
+          ]
+        }
+        ```
+      tags:
+        - Motor de Elegibilidad
+      operationId: executeEligibilityCheck
+      requestBody:
+        required: true
+        description: Criterios de evaluación y contexto del usuario
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EligibilityRequest"
+            examples:
+              simpleCheck:
+                summary: Verificación simple de edad
+                value:
+                  user_id: "did:81pass:user_9xYzA1"
+                  conditions:
+                    - field: "claims.age"
+                      operator: "gte"
+                      value: 18
+                  context:
+                    purpose: "Access to restricted content"
+                    requester_id: "org_2vPqN5LwX8kT"
+              complexCheck:
+                summary: Verificación compuesta con geolocalización
+                value:
+                  user_id: "did:81pass:user_9xYzA1"
+                  conditions:
+                    operator: "AND"
+                    rules:
+                      - field: "claims.city_of_birth"
+                        operator: "eq"
+                        value: "Cali"
+                      - field: "metadata.liveness_timestamp"
+                        operator: "gt"
+                        value: "2024-01-01T00:00:00Z"
+                      - field: "credentials.status"
+                        operator: "eq"
+                        value: "active"
+                  context:
+                    purpose: "Government benefit eligibility"
+                    geofence: "CO-VALLE-CALI"
+      responses:
+        "200":
+          description: Evaluación completada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EligibilityResponse"
+              examples:
+                matchResult:
+                  summary: Usuario elegible
+                  value:
+                    result: "MATCH"
+                    confidence_score: 0.98
+                    matched_credentials:
+                      ["cred_national_id_001", "cred_liveness_002"]
+                    verification_proof: "vp_token_eyJhbGciOiJFUzI1NiIs..."
+                    evaluated_at: "2024-01-15T10:30:00Z"
+                noMatchResult:
+                  summary: Usuario no elegible
+                  value:
+                    result: "NO_MATCH"
+                    confidence_score: 0.0
+                    missing_requirements:
+                      - "Liveness check expired (>24h)"
+                      - "Missing residency credential"
+                    suggestions:
+                      - "Re-validate liveness detection"
+                      - "Request address verification"
+                    evaluated_at: "2024-01-15T10:30:00Z"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "404":
+          description: Usuario no encontrado o sin credenciales activas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "UserNotFound"
+                message: "No active credentials found for DID: did:81pass:user_9xYzA1"
+                code: "ENGINE-404-001"
+        "422":
+          description: Condiciones de evaluación inválidas o malformadas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: "InvalidCondition"
+                message: "Unknown field 'claims.unknown_field' in condition"
+                code: "ENGINE-422-003"
+
+  /engine/checker/{user_id}:
+    get:
+      summary: Consultar Credenciales Activas de Usuario
+      description: |
+        Recupera el inventario completo de credenciales verificables activas asociadas 
+        a un usuario específico, incluyendo metadatos de validez y estado de revocación.
+
+        ### Filtrado y Paginación
+        - Soporte para filtrado por tipo de credencial (`type`)
+        - Ordenamiento por fecha de emisión o expiración
+
+        ### Privacidad
+        Este endpoint requiere consentimiento explícito del usuario o autorización 
+        regulatoria (ej. KYC/AML). Se registra cada acceso en el sistema de auditoría.
+      tags:
+        - Motor de Elegibilidad
+      operationId: listUserCredentials
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          description: |
+            Identificador descentralizado (DID) del usuario. Formato: `did:81pass:{uuid}`
+          schema:
+            type: string
+            pattern: "^did:81pass:[a-zA-Z0-9_-]+$"
+            example: "did:81pass:user_9xYzA1"
+        - name: credential_type
+          in: query
+          required: false
+          description: Filtrar por tipo específico de credencial
+          schema:
+            type: string
+            enum:
+              [
+                "NationalID",
+                "Passport",
+                "DriverLicense",
+                "LivenessProof",
+                "AddressVerification",
+              ]
+        - name: status
+          in: query
+          required: false
+          description: Estado de la credencial
+          schema:
+            type: string
+            enum: ["active", "expired", "revoked", "suspended"]
+            default: "active"
+      responses:
+        "200":
+          description: Lista de credenciales recuperada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialListResponse"
+              example:
+                user_id: "did:81pass:user_9xYzA1"
+                total_credentials: 3
+                pagination:
+                  next_token: "eyJzdGFydGtleSI6IHsiaWQ..."
+                  has_more: false
+                credentials:
+                  - id: "cred_national_id_001"
+                    type: "NationalID"
+                    issuer: "did:gov:co-national-registry"
+                    issued_at: "2023-06-15T00:00:00Z"
+                    expires_at: "2033-06-15T00:00:00Z"
+                    status: "active"
+                    claims_summary:
+                      full_name: "María González"
+                      document_number: "***4567"
+                      nationality: "CO"
+                  - id: "cred_liveness_002"
+                    type: "LivenessProof"
+                    issuer: "did:81pass:biometric-provider"
+                    issued_at: "2024-01-14T08:30:00Z"
+                    expires_at: "2024-01-15T08:30:00Z"
+                    status: "active"
+                    claims_summary:
+                      liveness_score: 0.99
+                      biometric_type: "facial_recognition"
+        "400":
+          description: ID de usuario malformado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Usuario no encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /credentials/validate:
+    post:
+      summary: Validar Credencial Específica (Cryptographic Verification)
+      description: |
+        Realiza verificación criptográfica completa de una credencial presentada, 
+        validando la firma del emisor, el estado de revocación y la integridad de los datos.
+
+        ### Proceso de Validación
+        1. **Parseo de JWT-VC**: Decodificación del credential token
+        2. **Verificación de firma**: Validación contra DID Document del emisor
+        3. **Chequeo de revocación**: Consulta a VC Revocation List 2020
+        4. **Validación de schema**: Verificación contra JSON Schema del tipo de credencial
+        5. **Verificación de expiración**: Chequeo de fechas `validFrom` y `validUntil`
+
+        ### Tipos Soportados
+        - W3C Verifiable Credentials (JWT-VC y LD-Proofs)
+        - ISO mDL (Mobile Driver License) - *Próximamente*
+      tags:
+        - Gestión de Credenciales
+      operationId: validateCredential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["credential_jwt", "challenge"]
+              properties:
+                credential_jwt:
+                  type: string
+                  description: Credencial en formato JWT-VC codificado
+                  example: "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9..."
+                challenge:
+                  type: string
+                  description: Nonce criptográfico para prevenir replay attacks
+                  example: "nonce_8f7d9a2b3c4e5f6g"
+                verify_revocation:
+                  type: boolean
+                  description: Forzar verificación contra lista de revocación
+                  default: true
+      responses:
+        "201":
+          description: Credencial verificada exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                    example: true
+                  verification_details:
+                    type: object
+                    properties:
+                      signature_valid:
+                        type: boolean
+                      issuer_trusted:
+                        type: boolean
+                      not_revoked:
+                        type: boolean
+                      not_expired:
+                        type: boolean
+                  credential_data:
+                    type: object
+                    description: Payload decodificado de la credencial (sin información sensible)
+        "400":
+          description: Formato de credencial inválido
+        "401":
+          description: Firma de emisor no verificable
+        "410":
+          description: Credencial revocada permanentemente
+
+  /credentials/revoke:
+    patch:
+      summary: Revocar Credencial (Revocation)
+      description: |
+        Invalida una credencial previamente emitida, agregándola a la Lista de Revocación 
+        Verificable (VC-RL) y notificando a los verificadores suscriptos.
+
+        ### Consideraciones Importantes
+        - **Irreversibilidad**: La revocación es permanente (no se puede deshacer)
+        - **Propagación**: La revocación puede tardar hasta 5 minutos en propagarse globalmente
+        - **Notificación**: Se envía webhook a verificadores que hayan consultado la credencial recientemente
+        - **Auditoría**: Requiere justificación detallada y autorización de segundo factor
+
+        ### Causales de Revocación Válidas
+        - `COMPROMISED`: Clave privada del titular comprometida
+        - `EXPIRED`: Renovación o reemplazo por nueva versión
+        - `FRAUD`: Detección de emisión fraudulenta
+        - `REQUESTED`: Solicitud voluntaria del titular
+        - `ADMINISTRATIVE`: Error administrativo del emisor
+      tags:
+        - Gestión de Credenciales
+      operationId: revokeCredential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["credential_id", "reason", "justification"]
+              properties:
+                credential_id:
+                  type: string
+                  description: ID único de la credencial a revocar
+                  example: "cred_national_id_001"
+                reason:
+                  type: string
+                  enum:
+                    [
+                      "COMPROMISED",
+                      "EXPIRED",
+                      "FRAUD",
+                      "REQUESTED",
+                      "ADMINISTRATIVE",
+                    ]
+                  description: Causal de revocación
+                justification:
+                  type: string
+                  minLength: 20
+                  description: Explicación detallada del motivo (mínimo 20 caracteres)
+                  example: "Usuario reportó pérdida de dispositivo móvil con credencial almacenada"
+                notify_holder:
+                  type: boolean
+                  default: true
+                  description: Notificar al titular de la credencial vía email/SMS
+      responses:
+        "200":
+          description: Credencial revocada exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  credential_id:
+                    type: string
+                  status:
+                    type: string
+                    enum: ["revoked"]
+                  revoked_at:
+                    type: string
+                    format: date-time
+                  revocation_list_index:
+                    type: integer
+                    description: Posición en la lista de revocación merkle tree
+                  affected_verifiers:
+                    type: integer
+                    description: Número de verificadores notificados
+        "409":
+          description: Credencial ya revocada previamente
+        "422":
+          description: Justificación insuficiente o causal inválida
+
+  /logs:
+    get:
+      summary: Consultar Logs de Auditoría (Audit Trail)
+      description: |
+        Recupera el historial de consumo de la API con fines de auditoría, compliance 
+        y monitoreo de seguridad. Incluye todas las llamadas con metadata completa.
+
+        ### Capacidades de Filtrado
+        - Por emisor (`caller_id`)
+        - Por usuario afectado (`subject_id`)
+        - Por endpoint específico
+        - Por rango de fechas (máximo 90 días por query)
+        - Por código de respuesta HTTP
+
+        ### Retención de Datos
+        - **Hot storage**: Últimos 30 días (latencia <100ms)
+        - **Cold storage**: 31-365 días (latencia <2s)
+        - **Archival**: >1 año (disponible bajo solicitud)
+      tags:
+        - Auditoría & Trazabilidad
+      operationId: queryAuditLogs
+      parameters:
+        - name: caller_id
+          in: query
+          schema:
+            type: string
+          description: Filtrar por ID del emisor/consumidor de la API
+          example: "org_2vPqN5LwX8kT"
+        - name: subject_id
+          in: query
+          schema:
+            type: string
+          description: Filtrar por usuario afectado (DID)
+        - name: endpoint
+          in: query
+          schema:
+            type: string
+            pattern: '^\/[a-z\/{}]+$'
+          description: Filtrar por path específico (ej. /engine/checker)
+        - name: status_code
+          in: query
+          schema:
+            type: integer
+          description: Filtrar por código de respuesta HTTP
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: Inicio del rango de búsqueda (ISO 8601)
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: Fin del rango de búsqueda (ISO 8601)
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 1000
+            default: 100
+      responses:
+        "200":
+          description: Logs recuperados exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_records:
+                    type: integer
+                  logs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LogEntry"
+                  pagination:
+                    type: object
+                    properties:
+                      next_cursor:
+                        type: string
+                      has_more:
+                        type: boolean
+
+    post:
+      summary: Registrar Evento de Auditoría (Internal)
+      description: |
+        **Endpoint interno** para registro manual de eventos de auditoría. 
+        Principalmente utilizado por workers asíncronos y procesos batch.
+
+        ### Casos de Uso
+        - Registro de eventos de webhook delivery
+        - Auditoría de cambios en configuración de emisores
+        - Tracking de jobs de procesamiento batch
+
+        > **Nota**: Requiere scope especial `audit:write`. No disponible para emisores estándar.
+      tags:
+        - Auditoría & Trazabilidad
+      operationId: createAuditLog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogEntry"
+      responses:
+        "201":
+          description: Log registrado exitosamente
+          headers:
+            X-Log-Id:
+              description: ID único del log creado
+              schema:
+                type: string
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        API Key de emisor. Formato: `pk_live_` o `pk_test_` seguido de 32 caracteres hexadecimales.
+        Incluir en header `X-API-Key: pk_live_a1b2c3d4e5f6...`
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Token JWT de sesión obtenido tras autenticación exitosa. 
+        Incluir en header `Authorization: Bearer eyJhbGciOiJ...`
+
+  schemas:
+    AuthResponse:
+      type: object
+      properties:
+        issuer_id:
+          type: string
+          description: Identificador único del emisor
+        status:
+          type: string
+          enum: ["active", "suspended", "pending_verification"]
+        permissions:
+          type: array
+          items:
+            type: string
+          description: Lista de scopes autorizados
+        rate_limit_tier:
+          type: string
+          enum: ["free", "standard", "enterprise", "custom"]
+        expires_at:
+          type: string
+          format: date-time
+          description: Expiración de la API Key
+
+    EligibilityRequest:
+      type: object
+      required: ["user_id", "conditions"]
+      properties:
+        user_id:
+          type: string
+          description: DID del usuario a evaluar
+          example: "did:81pass:user_9xYzA1"
+        conditions:
+          oneOf:
+            - type: array
+              items:
+                type: object
+              description: Lista de condiciones simples
+            - type: object
+              description: Condición compuesta anidada
+        context:
+          type: object
+          properties:
+            purpose:
+              type: string
+              description: Propósito de la evaluación (para auditoría)
+            requester_id:
+              type: string
+            geofence:
+              type: string
+              description: Código de geocerca para validación de ubicación
+
+    EligibilityResponse:
+      type: object
+      required: ["result", "evaluated_at"]
+      properties:
+        result:
+          type: string
+          enum: ["MATCH", "NO_MATCH", "PARTIAL_MATCH", "ERROR"]
+          description: Resultado de la evaluación
+        confidence_score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Nivel de confianza en el resultado (0-1)
+        matched_credentials:
+          type: array
+          items:
+            type: string
+          description: IDs de credenciales que satisfacen las condiciones
+        missing_requirements:
+          type: array
+          items:
+            type: string
+          description: Condiciones no satisfechas con detalles específicos
+        suggestions:
+          type: array
+          items:
+            type: string
+          description: Recomendaciones para alcanzar elegibilidad
+        verification_proof:
+          type: string
+          description: JWT de Verifiable Presentation (VP) como prueba de la evaluación
+        evaluated_at:
+          type: string
+          format: date-time
+
+    CredentialItem:
+      type: object
+      properties:
+        id:
+          type: string
+          description: ID único de la credencial
+        type:
+          type: string
+          description: Tipo de credencial según vocabulario controlado
+        issuer:
+          type: string
+          description: DID del emisor
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: ["active", "expired", "revoked", "suspended"]
+        claims_summary:
+          type: object
+          description: Resumen de claims (datos sensibles ofuscados)
+
+    CredentialListResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+        total_credentials:
+          type: integer
+        pagination:
+          type: object
+          properties:
+            next_token:
+              type: string
+              description: Token para paginación (cursor-based)
+            has_more:
+              type: boolean
+        credentials:
+          type: array
+          items:
+            $ref: "#/components/schemas/CredentialItem"
+
+    LogEntry:
+      type: object
+      required: ["timestamp", "caller_id", "endpoint", "method"]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: Momento exacto del evento (UTC)
+        caller_id:
+          type: string
+          description: Identificador del emisor o sistema que realizó la llamada
+        endpoint:
+          type: string
+          description: Path completo del endpoint invocado
+        method:
+          type: string
+          enum: ["GET", "POST", "PUT", "PATCH", "DELETE"]
+        ip_address:
+          type: string
+          format: ipv4
+          description: Dirección IP origen (anonimizada para usuarios GDPR)
+        status_code:
+          type: integer
+          description: Código HTTP de respuesta
+        response_time_ms:
+          type: integer
+          description: Tiempo de respuesta en milisegundos
+        payload_summary:
+          type: string
+          description: Resumen hash de la acción realizada (sin datos PII)
+        correlation_id:
+          type: string
+          description: ID de trazabilidad para seguimiento distribuido
+        user_agent:
+          type: string
+          description: Client user agent string
+
+    Error:
+      type: object
+      required: ["error", "message", "code"]
+      properties:
+        error:
+          type: string
+          description: Código corto del error (snake_case)
+        message:
+          type: string
+          description: Descripción legible del error
+        code:
+          type: string
+          description: Código interno de error (formato MODULO-HTTP-SEQ)
+        details:
+          type: object
+          description: Información adicional específica del error
+        request_id:
+          type: string
+          description: ID de correlación para soporte técnico
+        documentation_url:
+          type: string
+          format: uri
+          description: Enlace a documentación del error
+
+  responses:
+    UnauthorizedError:
+      description: Autenticación requerida o credenciales inválidas
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "unauthorized"
+            message: "API Key inválida o expirada"
+            code: "AUTH-401-001"
+            request_id: "req_8f7d9a2b3c4e"
+            documentation_url: "https://docs.81pass.io/errors/AUTH-401-001"
+
+    ForbiddenError:
+      description: Permisos insuficientes para el recurso solicitado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "forbidden"
+            message: "El emisor no tiene permisos 'engine:execute'"
+            code: "AUTH-403-002"
+            details:
+              required_permissions: ["engine:execute"]
+              current_permissions: ["credentials:read"]
+
+    RateLimitError:
+      description: Límite de peticiones excedido
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Segundos hasta que se resetee el rate limit
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Timestamp Unix de reset
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "rate_limit_exceeded"
+            message: "Has excedido el límite de 100 peticiones/minuto"
+            code: "RATE-429-001"
+            details:
+              limit: 100
+              window: "60s"
+              retry_after: 45
+
+    BadRequestError:
+      description: Petición malformada o parámetros inválidos
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "bad_request"
+            message: "El campo 'user_id' es requerido"
+            code: "VAL-400-001"
+            details:
+              field: "user_id"
+              issue: "required"
