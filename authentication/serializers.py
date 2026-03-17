@@ -179,7 +179,7 @@ class UserLoginSerializer(serializers.Serializer):
         password = data.get("password")
         org_slug = data.get("organization_slug")
 
-        print(f"========== VALIDATE ==========")
+        print("========== VALIDATE ==========")
         print(f"Email: {email}, Org: {org_slug}")
 
         try:

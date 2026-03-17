@@ -35,6 +35,8 @@ class JobOffer(TimeStampedModel):
     # Ubicación y tipo
     location = models.CharField(max_length=255, blank=True)
     remote = models.BooleanField(default=False)
+    category = models.CharField(max_length=255, blank=True)
+    benefits = models.JSONField(default=list, blank=True)
     job_type = models.CharField(
         max_length=20,
         choices=[

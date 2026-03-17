@@ -34,8 +34,14 @@ class JobOfferViewSet(viewsets.ModelViewSet):
         filters.SearchFilter,
         filters.OrderingFilter,
     ]
-    filterset_fields = ["job_type", "remote", "is_active", "organization"]
-    search_fields = ["title", "company_name", "description", "skills"]
+    filterset_fields = [
+        "job_type",
+        "remote",
+        "is_active",
+        "organization",
+        "category",
+    ]  # ← AGREGAR category
+    search_fields = ["title", "company_name", "description", "skills", "category"]
     ordering_fields = ["posted_at", "salary_min", "applications_count"]
 
     def get_serializer_class(self):
@@ -87,13 +93,12 @@ class JobOfferViewSet(viewsets.ModelViewSet):
 
         user = self.request.user
         print(f"DEBUG: User is {user} - Auth: {user.is_authenticated}")
-        company_name = serializer.validated_data.get("company_name")
-        if not company_name:
-            # 1. Intentar obtener el nombre (Prioridad: Usuario > Organización)
-            company_name = user.company_name or (
-                user.organization.name if user.organization else None
-            )
 
+        # 1. Intentar obtener el nombre (Prioridad: Usuario > Organización)
+        company_name = user.company_name or (
+            user.organization.name if user.organization else None
+        )
+        print(f"DEBUG: Company name is {company_name}")
         # 2. Hard check: Si no hay nombre, abortamos la operación
         if not company_name:
             raise ValidationError(
@@ -109,6 +114,28 @@ class JobOfferViewSet(viewsets.ModelViewSet):
             posted_by=user,
             company_name=company_name,
         )
+
+    # ← AGREGAR ESTE MÉTODO
+    def perform_update(self, serializer):
+        """Forzar el company_name del usuario en actualizaciones"""
+        from rest_framework.exceptions import ValidationError
+
+        user = self.request.user
+
+        # Siempre usar el company_name del usuario, ignorar lo del frontend
+        company_name = user.company_name or (
+            user.organization.name if user.organization else None
+        )
+
+        if not company_name:
+            raise ValidationError(
+                {
+                    "detail": "No se pudo determinar el nombre de la empresa. "
+                    "El usuario o su organización deben tener un nombre asignado."
+                }
+            )
+
+        serializer.save(company_name=company_name)
 
     @action(detail=True, methods=["get"])
     def company_name(self, request, pk=None):

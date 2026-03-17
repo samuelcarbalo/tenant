@@ -14,6 +14,12 @@ D:\app_multi_tenant\venv\Scripts\activate
 cd tenant
 python manage.py runserver --settings=config.settings.development
 
+# COMANDOD GIT
+
+git add .
+git commit -m "mensaje"
+git push origin main
+
 # crear una app
 
 python manage.py startapp jobs

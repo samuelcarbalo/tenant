@@ -20,6 +20,7 @@ class JobOfferListSerializer(serializers.ModelSerializer):
             "location",
             "remote",
             "job_type",
+            "category",  # ← AGREGAR
             "salary_min",
             "salary_max",
             "currency",
@@ -77,7 +78,9 @@ class JobOfferCreateUpdateSerializer(serializers.ModelSerializer):
 
     # EXPLÍCITAMENTE opcional
     company_name = serializers.CharField(
-        required=False, allow_blank=True, allow_null=True
+        required=False,
+        allow_blank=True,
+        allow_null=True,
     )
 
     class Meta:
@@ -91,6 +94,8 @@ class JobOfferCreateUpdateSerializer(serializers.ModelSerializer):
             "location",
             "remote",
             "job_type",
+            "category",  # ← AGREGAR
+            "benefits",  # ← AGREGAR
             "salary_min",
             "salary_max",
             "currency",
@@ -105,6 +110,8 @@ class JobOfferCreateUpdateSerializer(serializers.ModelSerializer):
                 "allow_blank": True,
                 "allow_null": True,
             },
+            "category": {"required": False, "allow_blank": True},  # ← AGREGAR
+            "benefits": {"required": False},
         }
 
     def validate_skills(self, value):
