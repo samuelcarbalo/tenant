@@ -16,6 +16,9 @@ python manage.py runserver --settings=config.settings.development
 
 # COMANDOD GIT
 
+D:
+cd D:\app_multi_tenant\tenant
+D:\app_multi_tenant\venv\Scripts\activate
 git add .
 git commit -m "mensaje"
 git push origin main
