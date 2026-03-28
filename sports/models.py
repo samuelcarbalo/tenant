@@ -1,7 +1,7 @@
 import uuid
 from django.db import models
-from apps.core.models import TimeStampedModel
-from apps.organizations.models import Organization
+from core.models import TimeStampedModel
+from organizations.models import Organization
 
 
 class Tournament(TimeStampedModel):

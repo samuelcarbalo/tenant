@@ -1,441 +1,273 @@
-from rest_framework import viewsets, status, filters
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from django.db.models import Q, Count, Prefetch
-from django.utils import timezone
-
+from rest_framework import serializers
 from .models import Tournament, Team, Player, Match, MatchEvent
-from .serializers import (
-    TournamentListSerializer,
-    TournamentDetailSerializer,
-    TeamListSerializer,
-    TeamDetailSerializer,
-    PlayerListSerializer,
-    PlayerDetailSerializer,
-    MatchListSerializer,
-    MatchDetailSerializer,
-    MatchCreateUpdateSerializer,
-    MatchEventSerializer,
-    StandingsSerializer,
-)
-from apps.core.permissions import IsOrganizationMember, IsOrganizationAdmin
 
 
-class TournamentViewSet(viewsets.ModelViewSet):
-    """ViewSet para torneos"""
+class TournamentListSerializer(serializers.ModelSerializer):
+    """Serializer para listado de torneos"""
 
-    queryset = Tournament.objects.all()
-    lookup_field = "slug"
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ["name", "description"]
-    ordering_fields = ["start_date", "created_at"]
+    organization_name = serializers.CharField(
+        source="organization.name", read_only=True
+    )
+    teams_count = serializers.IntegerField(source="teams.count", read_only=True)
+    matches_count = serializers.IntegerField(source="matches.count", read_only=True)
+    sport_type_display = serializers.CharField(
+        source="get_sport_type_display", read_only=True
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
 
-    def get_serializer_class(self):
-        if self.action == "list":
-            return TournamentListSerializer
-        return TournamentDetailSerializer
+    class Meta:
+        model = Tournament
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "sport_type",
+            "sport_type_display",
+            "organization",
+            "organization_name",
+            "start_date",
+            "end_date",
+            "status",
+            "status_display",
+            "logo",
+            "teams_count",
+            "matches_count",
+        ]
 
-    def get_permissions(self):
-        if self.action in ["list", "retrieve"]:
-            return [AllowAny()]
-        return [IsAuthenticated(), IsOrganizationMember()]
 
-    def get_queryset(self):
-        queryset = Tournament.objects.select_related("organization").annotate(
-            teams_count=Count("teams", distinct=True),
-            matches_count=Count("matches", distinct=True),
-        )
+class TournamentDetailSerializer(serializers.ModelSerializer):
+    """Serializer detallado de torneo"""
 
-        # Filtrar por tipo de deporte
-        sport_type = self.request.query_params.get("sport_type")
-        if sport_type:
-            queryset = queryset.filter(sport_type=sport_type)
+    organization_name = serializers.CharField(
+        source="organization.name", read_only=True
+    )
+    sport_type_display = serializers.CharField(
+        source="get_sport_type_display", read_only=True
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
 
-        # Filtrar por estado
-        status_param = self.request.query_params.get("status")
-        if status_param:
-            queryset = queryset.filter(status=status_param)
+    class Meta:
+        model = Tournament
+        fields = "__all__"
 
-        # Filtrar por organización
-        org_slug = self.request.query_params.get("organization")
-        if org_slug:
-            queryset = queryset.filter(organization__slug=org_slug)
 
-        # Usuarios no autenticados solo ven activos/finalizados
-        if not self.request.user.is_authenticated:
-            queryset = queryset.filter(status__in=["active", "finished"])
+class TeamListSerializer(serializers.ModelSerializer):
+    """Serializer para listado de equipos"""
 
-        return queryset.order_by("-start_date")
+    tournament_name = serializers.CharField(source="tournament.name", read_only=True)
+    players_count = serializers.IntegerField(source="players.count", read_only=True)
+    position = serializers.SerializerMethodField()
 
-    @action(detail=True, methods=["get"])
-    def standings(self, request, slug=None):
-        """Tabla de posiciones del torneo"""
-        tournament = self.get_object()
-        teams = Team.objects.filter(tournament=tournament).order_by(
+    class Meta:
+        model = Team
+        fields = [
+            "id",
+            "name",
+            "abbreviation",
+            "logo",
+            "tournament",
+            "tournament_name",
+            "played",
+            "won",
+            "drawn",
+            "lost",
+            "goals_for",
+            "goals_against",
+            "goal_difference",
+            "points",
+            "position",
+            "players_count",
+            # Softbol stats
+            "runs",
+            "runs_against",
+            "average",
+        ]
+
+    def get_position(self, obj):
+        """Calcular posición en la tabla"""
+        teams = Team.objects.filter(tournament=obj.tournament).order_by(
             "-points", "-goal_difference", "-goals_for", "name"
         )
-
-        standings = []
         for idx, team in enumerate(teams, 1):
-            data = {
-                "position": idx,
-                "team": team,
-                "played": team.played,
-                "won": team.won,
-                "drawn": team.drawn,
-                "lost": team.lost,
-                "goals_for": team.goals_for,
-                "goals_against": team.goals_against,
-                "goal_difference": team.goal_difference,
-                "points": team.points,
-            }
-            # Agregar stats de softbol si aplica
-            if tournament.sport_type == "softball":
-                data.update(
-                    {
-                        "runs": team.runs,
-                        "runs_against": team.runs_against,
-                        "average": team.average,
-                    }
-                )
-            standings.append(data)
-
-        serializer = StandingsSerializer(standings, many=True)
-        return Response(serializer.data)
-
-    @action(detail=True, methods=["get"])
-    def schedule(self, request, slug=None):
-        """Calendario de partidos del torneo"""
-        tournament = self.get_object()
-        matches = (
-            Match.objects.filter(tournament=tournament)
-            .select_related("home_team", "away_team")
-            .order_by("match_date")
-        )
-
-        # Filtro por estado
-        status_param = request.query_params.get("status")
-        if status_param:
-            matches = matches.filter(status=status_param)
-
-        # Filtro por equipo
-        team_id = request.query_params.get("team")
-        if team_id:
-            matches = matches.filter(Q(home_team_id=team_id) | Q(away_team_id=team_id))
-
-        serializer = MatchListSerializer(matches, many=True)
-        return Response(serializer.data)
+            if team.id == obj.id:
+                return idx
+        return None
 
 
-class TeamViewSet(viewsets.ModelViewSet):
-    """ViewSet para equipos"""
+class TeamDetailSerializer(serializers.ModelSerializer):
+    """Serializer detallado de equipo"""
 
-    queryset = Team.objects.all()
+    tournament_name = serializers.CharField(source="tournament.name", read_only=True)
+    players = serializers.SerializerMethodField()
 
-    def get_serializer_class(self):
-        if self.action == "list":
-            return TeamListSerializer
-        return TeamDetailSerializer
+    class Meta:
+        model = Team
+        fields = "__all__"
 
-    def get_permissions(self):
-        if self.action in ["list", "retrieve"]:
-            return [AllowAny()]
-        return [IsAuthenticated(), IsOrganizationMember()]
-
-    def get_queryset(self):
-        queryset = Team.objects.select_related("tournament", "organization").annotate(
-            players_count=Count("players", filter=Q(players__is_active=True))
-        )
-
-        # Filtrar por torneo
-        tournament_slug = self.request.query_params.get("tournament")
-        if tournament_slug:
-            queryset = queryset.filter(tournament__slug=tournament_slug)
-
-        # Filtrar por organización
-        if self.request.user.is_authenticated and not self.request.user.is_superuser:
-            queryset = queryset.filter(organization=self.request.user.organization)
-
-        return queryset.order_by("-points", "name")
-
-    @action(detail=True, methods=["get"])
-    def players(self, request, pk=None):
-        """Jugadores del equipo"""
-        team = self.get_object()
-        players = team.players.filter(is_active=True)
-
-        position = request.query_params.get("position")
-        if position:
-            players = players.filter(position=position)
-
-        serializer = PlayerListSerializer(players, many=True)
-        return Response(serializer.data)
-
-    @action(detail=True, methods=["get"])
-    def matches(self, request, pk=None):
-        """Partidos del equipo"""
-        team = self.get_object()
-        matches = (
-            Match.objects.filter(Q(home_team=team) | Q(away_team=team))
-            .select_related("home_team", "away_team")
-            .order_by("match_date")
-        )
-
-        serializer = MatchListSerializer(matches, many=True)
-        return Response(serializer.data)
+    def get_players(self, obj):
+        """Lista de jugadores activos"""
+        players = obj.players.filter(is_active=True)
+        return PlayerListSerializer(players, many=True).data
 
 
-class PlayerViewSet(viewsets.ModelViewSet):
-    """ViewSet para jugadores"""
+class PlayerListSerializer(serializers.ModelSerializer):
+    """Serializer para listado de jugadores"""
 
-    queryset = Player.objects.all()
+    team_name = serializers.CharField(source="team.name", read_only=True)
+    position_display = serializers.CharField(
+        source="get_position_display", read_only=True
+    )
 
-    def get_serializer_class(self):
-        if self.action == "list":
-            return PlayerListSerializer
-        return PlayerDetailSerializer
+    class Meta:
+        model = Player
+        fields = [
+            "id",
+            "full_name",
+            "nickname",
+            "jersey_number",
+            "position",
+            "position_display",
+            "team",
+            "team_name",
+            "photo",
+            "is_captain",
+            "matches_played",
+            "goals",
+            "assists",
+            "average",
+        ]
 
-    def get_permissions(self):
-        if self.action in ["list", "retrieve"]:
-            return [AllowAny()]
-        return [IsAuthenticated(), IsOrganizationMember()]
 
-    def get_queryset(self):
-        queryset = Player.objects.select_related("team", "tournament")
+class PlayerDetailSerializer(serializers.ModelSerializer):
+    """Serializer detallado de jugador"""
 
-        # Filtros
-        team_id = self.request.query_params.get("team")
-        if team_id:
-            queryset = queryset.filter(team_id=team_id)
+    team_name = serializers.CharField(source="team.name", read_only=True)
+    tournament_name = serializers.CharField(source="tournament.name", read_only=True)
+    position_display = serializers.CharField(
+        source="get_position_display", read_only=True
+    )
 
-        tournament_slug = self.request.query_params.get("tournament")
-        if tournament_slug:
-            queryset = queryset.filter(tournament__slug=tournament_slug)
+    class Meta:
+        model = Player
+        fields = "__all__"
 
-        position = self.request.query_params.get("position")
-        if position:
-            queryset = queryset.filter(position=position)
 
-        search = self.request.query_params.get("search")
-        if search:
-            queryset = queryset.filter(
-                Q(first_name__icontains=search)
-                | Q(last_name__icontains=search)
-                | Q(nickname__icontains=search)
+class MatchEventSerializer(serializers.ModelSerializer):
+    """Serializer para eventos de partido"""
+
+    player_name = serializers.CharField(source="player.full_name", read_only=True)
+    team_name = serializers.CharField(source="team.name", read_only=True)
+    event_type_display = serializers.CharField(
+        source="get_event_type_display", read_only=True
+    )
+
+    class Meta:
+        model = MatchEvent
+        fields = [
+            "id",
+            "event_type",
+            "event_type_display",
+            "minute",
+            "player",
+            "player_name",
+            "team",
+            "team_name",
+            "description",
+        ]
+
+
+class MatchListSerializer(serializers.ModelSerializer):
+    """Serializer para listado de partidos"""
+
+    home_team_name = serializers.CharField(source="home_team.name", read_only=True)
+    away_team_name = serializers.CharField(source="away_team.name", read_only=True)
+    home_team_logo = serializers.CharField(source="home_team.logo", read_only=True)
+    away_team_logo = serializers.CharField(source="away_team.logo", read_only=True)
+    tournament_name = serializers.CharField(source="tournament.name", read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = Match
+        fields = [
+            "id",
+            "tournament",
+            "tournament_name",
+            "home_team",
+            "home_team_name",
+            "home_team_logo",
+            "away_team",
+            "away_team_name",
+            "away_team_logo",
+            "home_score",
+            "away_score",
+            "home_runs",
+            "away_runs",  # Softbol
+            "match_date",
+            "venue",
+            "status",
+            "status_display",
+            "round_number",
+        ]
+
+
+class MatchDetailSerializer(serializers.ModelSerializer):
+    """Serializer detallado de partido con eventos"""
+
+    home_team_detail = TeamListSerializer(source="home_team", read_only=True)
+    away_team_detail = TeamListSerializer(source="away_team", read_only=True)
+    tournament_name = serializers.CharField(source="tournament.name", read_only=True)
+    events = MatchEventSerializer(many=True, read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = Match
+        fields = "__all__"
+
+
+class MatchCreateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer para crear/actualizar partidos"""
+
+    class Meta:
+        model = Match
+        fields = [
+            "tournament",
+            "home_team",
+            "away_team",
+            "match_date",
+            "venue",
+            "stadium",
+            "round_number",
+            "match_week",
+            "notes",
+        ]
+
+    def validate(self, data):
+        # Validar que los equipos pertenezcan al mismo torneo
+        if data["home_team"] == data["away_team"]:
+            raise serializers.ValidationError("Los equipos deben ser diferentes")
+
+        if data["home_team"].tournament != data["away_team"].tournament:
+            raise serializers.ValidationError(
+                "Los equipos deben pertenecer al mismo torneo"
             )
 
-        return queryset.order_by("jersey_number", "last_name")
-
-    @action(detail=True, methods=["get"])
-    def stats(self, request, pk=None):
-        """Estadísticas detalladas del jugador"""
-        player = self.get_object()
-
-        # Calcular promedio de bateo para softbol
-        stats = {
-            "matches_played": player.matches_played,
-            "goals": player.goals,
-            "assists": player.assists,
-            "yellow_cards": player.yellow_cards,
-            "red_cards": player.red_cards,
-        }
-
-        if player.tournament.sport_type == "softball":
-            stats.update(
-                {
-                    "average": player.average,
-                    "strikes": player.strikes,
-                    "walks": player.walks,
-                    "home_runs": player.home_runs,
-                    "strikes_out": player.strikes_out,
-                }
-            )
-
-        return Response(stats)
+        return data
 
 
-class MatchViewSet(viewsets.ModelViewSet):
-    """ViewSet para partidos"""
+class StandingsSerializer(serializers.Serializer):
+    """Serializer para tabla de posiciones"""
 
-    queryset = Match.objects.all()
-
-    def get_serializer_class(self):
-        if self.action == "list":
-            return MatchListSerializer
-        elif self.action in ["create", "update", "partial_update"]:
-            return MatchCreateUpdateSerializer
-        return MatchDetailSerializer
-
-    def get_permissions(self):
-        if self.action in ["list", "retrieve"]:
-            return [AllowAny()]
-        return [IsAuthenticated(), IsOrganizationMember()]
-
-    def get_queryset(self):
-        queryset = Match.objects.select_related(
-            "tournament", "home_team", "away_team"
-        ).prefetch_related("events", "events__player")
-
-        # Filtros
-        tournament_slug = self.request.query_params.get("tournament")
-        if tournament_slug:
-            queryset = queryset.filter(tournament__slug=tournament_slug)
-
-        team_id = self.request.query_params.get("team")
-        if team_id:
-            queryset = queryset.filter(
-                Q(home_team_id=team_id) | Q(away_team_id=team_id)
-            )
-
-        status_param = self.request.query_params.get("status")
-        if status_param:
-            queryset = queryset.filter(status=status_param)
-
-        # Partidos en vivo o próximos
-        live_only = self.request.query_params.get("live")
-        if live_only:
-            queryset = queryset.filter(status="live")
-
-        # Fecha
-        date_from = self.request.query_params.get("from")
-        date_to = self.request.query_params.get("to")
-        if date_from:
-            queryset = queryset.filter(match_date__date__gte=date_from)
-        if date_to:
-            queryset = queryset.filter(match_date__date__lte=date_to)
-
-        return queryset.order_by("match_date")
-
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
-    def update_score(self, request, pk=None):
-        """Actualizar marcador del partido"""
-        match = self.get_object()
-
-        # Verificar que el usuario pertenezca a la organización del torneo
-        if (
-            not request.user.is_superuser
-            and request.user.organization != match.tournament.organization
-        ):
-            return Response(
-                {"error": "No tienes permiso para editar este partido"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        home_score = request.data.get("home_score")
-        away_score = request.data.get("away_score")
-
-        # Softbol stats
-        home_runs = request.data.get("home_runs")
-        away_runs = request.data.get("away_runs")
-
-        if home_score is not None:
-            match.home_score = home_score
-        if away_score is not None:
-            match.away_score = away_score
-        if home_runs is not None:
-            match.home_runs = home_runs
-        if away_runs is not None:
-            match.away_runs = away_runs
-
-        match.status = "finished"
-        match.save()
-
-        # Actualizar estadísticas de equipos
-        self._update_team_stats(match)
-
-        serializer = MatchDetailSerializer(match)
-        return Response(serializer.data)
-
-    def _update_team_stats(self, match):
-        """Actualizar estadísticas de equipos después de un partido"""
-        home = match.home_team
-        away = match.away_team
-
-        # Actualizar partidos jugados
-        home.played += 1
-        away.played += 1
-
-        # Determinar resultado
-        if match.home_score > match.away_score:
-            home.won += 1
-            home.points += 3
-            away.lost += 1
-        elif match.away_score > match.home_score:
-            away.won += 1
-            away.points += 3
-            home.lost += 1
-        else:
-            home.drawn += 1
-            away.drawn += 1
-            home.points += 1
-            away.points += 1
-
-        # Goles/Carreras
-        home.goals_for += match.home_score or 0
-        home.goals_against += match.away_score or 0
-        away.goals_for += match.away_score or 0
-        away.goals_against += match.home_score or 0
-
-        # Softbol stats
-        if match.tournament.sport_type == "softball":
-            home.runs += match.home_runs or 0
-            home.runs_against += match.away_runs or 0
-            away.runs += match.away_runs or 0
-            away.runs_against += match.home_runs or 0
-
-            # Calcular average
-            if home.runs_against > 0:
-                home.average = home.runs / home.runs_against
-            if away.runs_against > 0:
-                away.average = away.runs / away.runs_against
-
-        home.save()
-        away.save()
-
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
-    def add_event(self, request, pk=None):
-        """Agregar evento al partido (gol, tarjeta, etc.)"""
-        match = self.get_object()
-
-        serializer = MatchEventSerializer(data=request.data)
-        if serializer.is_valid():
-            event = serializer.save(match=match)
-
-            # Actualizar estadísticas del jugador si aplica
-            if event.player:
-                self._update_player_stats(event)
-
-            return Response(
-                MatchEventSerializer(event).data, status=status.HTTP_201_CREATED
-            )
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    def _update_player_stats(self, event):
-        """Actualizar estadísticas del jugador"""
-        player = event.player
-
-        if event.event_type == "goal":
-            player.goals += 1
-            if event.match.tournament.sport_type == "softball":
-                player.strikes += 1
-        elif event.event_type == "yellow_card":
-            player.yellow_cards += 1
-        elif event.event_type == "red_card":
-            player.red_cards += 1
-
-        player.save()
-
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
-    def start_match(self, request, pk=None):
-        """Iniciar partido (cambiar estado a 'live')"""
-        match = self.get_object()
-        match.status = "live"
-        match.save()
-        return Response({"status": "Partido iniciado", "match_id": str(match.id)})
-
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
-    def finish_match(self, request, pk=None):
-        """Finalizar partido"""
-        return self.update_score(request, pk)
+    position = serializers.IntegerField()
+    team = TeamListSerializer()
+    played = serializers.IntegerField()
+    won = serializers.IntegerField()
+    drawn = serializers.IntegerField()
+    lost = serializers.IntegerField()
+    goals_for = serializers.IntegerField()
+    goals_against = serializers.IntegerField()
+    goal_difference = serializers.IntegerField()
+    points = serializers.IntegerField()
+    # Softbol
+    runs = serializers.IntegerField(required=False)
+    runs_against = serializers.IntegerField(required=False)
+    average = serializers.FloatField(required=False)

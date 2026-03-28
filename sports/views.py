@@ -254,6 +254,22 @@ class PlayerViewSet(viewsets.ModelViewSet):
 
         return Response(stats)
 
+    def create(self, request, *args, **kwargs):
+        # Detectar si es una lista (bulk create) o un solo objeto
+        is_many = isinstance(request.data, list)
+
+        serializer = self.get_serializer(data=request.data, many=is_many)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            serializer.data, status=status.HTTP_201_CREATED, headers=headers
+        )
+
+    def perform_create(self, serializer):
+        serializer.save()
+
 
 class MatchViewSet(viewsets.ModelViewSet):
     """ViewSet para partidos"""
