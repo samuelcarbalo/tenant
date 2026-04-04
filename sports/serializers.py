@@ -2,6 +2,25 @@ from rest_framework import serializers
 from .models import Tournament, Team, Player, Match, MatchEvent
 
 
+class TournamentCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Tournament
+        fields = [
+            "name",
+            "slug",
+            "description",
+            "sport_type",
+            "start_date",
+            "end_date",
+            "registration_deadline",
+            "max_teams",
+            "min_players_per_team",
+            "max_players_per_team",
+            "logo",
+            "banner",
+        ]
+
+
 class TournamentListSerializer(serializers.ModelSerializer):
     """Serializer para listado de torneos"""
 
@@ -32,6 +51,7 @@ class TournamentListSerializer(serializers.ModelSerializer):
             "logo",
             "teams_count",
             "matches_count",
+            "posted_by",
         ]
 
 
@@ -86,7 +106,7 @@ class TeamListSerializer(serializers.ModelSerializer):
     def get_position(self, obj):
         """Calcular posición en la tabla"""
         teams = Team.objects.filter(tournament=obj.tournament).order_by(
-            "-points", "-goal_difference", "-goals_for", "name"
+            "-points", "-goals_for", "name"
         )
         for idx, team in enumerate(teams, 1):
             if team.id == obj.id:

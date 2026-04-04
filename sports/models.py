@@ -1,7 +1,7 @@
-import uuid
 from django.db import models
 from core.models import TimeStampedModel
 from organizations.models import Organization
+from authentication.models import User
 
 
 class Tournament(TimeStampedModel):
@@ -12,7 +12,11 @@ class Tournament(TimeStampedModel):
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True)
     description = models.TextField(blank=True)
-
+    posted_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="posted_tournaments",
+    )
     SPORT_TYPES = [
         ("football", "Fútbol"),
         ("basketball", "Baloncesto"),
@@ -70,7 +74,11 @@ class Team(TimeStampedModel):
     slug = models.SlugField()
     abbreviation = models.CharField(max_length=10)
     description = models.TextField(blank=True)
-
+    posted_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="posted_teams",
+    )
     tournament = models.ForeignKey(
         Tournament, on_delete=models.CASCADE, related_name="teams"
     )
@@ -133,7 +141,11 @@ class Player(TimeStampedModel):
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
     nickname = models.CharField(max_length=100, blank=True)
-
+    posted_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="posted_players",
+    )
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="players")
     tournament = models.ForeignKey(
         Tournament, on_delete=models.CASCADE, related_name="players"
@@ -218,7 +230,11 @@ class Match(TimeStampedModel):
     tournament = models.ForeignKey(
         Tournament, on_delete=models.CASCADE, related_name="matches"
     )
-
+    posted_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="posted_matches",
+    )
     # Equipos
     home_team = models.ForeignKey(
         Team, on_delete=models.CASCADE, related_name="home_matches"
@@ -286,6 +302,11 @@ class MatchEvent(TimeStampedModel):
     Eventos de un partido (goles, tarjetas, sustituciones)
     """
 
+    posted_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="posted_match_events",
+    )
     match = models.ForeignKey(Match, on_delete=models.CASCADE, related_name="events")
     team = models.ForeignKey(
         Team, on_delete=models.CASCADE, related_name="match_events"

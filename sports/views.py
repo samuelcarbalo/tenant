@@ -18,8 +18,9 @@ from .serializers import (
     MatchCreateUpdateSerializer,
     MatchEventSerializer,
     StandingsSerializer,
+    TournamentCreateSerializer,
 )
-from core.permissions import IsOrganizationMember, IsOrganizationAdmin
+from core.permissions import IsOrganizationMember
 
 
 class TournamentViewSet(viewsets.ModelViewSet):
@@ -32,12 +33,16 @@ class TournamentViewSet(viewsets.ModelViewSet):
     ordering_fields = ["start_date", "created_at"]
 
     def get_serializer_class(self):
+        if self.action == "create":
+            return TournamentCreateSerializer
         if self.action == "list":
             return TournamentListSerializer
         return TournamentDetailSerializer
 
     def get_permissions(self):
-        if self.action in ["list", "retrieve"]:
+        if self.action == "create":
+            return [IsAuthenticated()]
+        if self.action in ["list", "retrieve", "standings", "schedule"]:
             return [AllowAny()]
         return [IsAuthenticated(), IsOrganizationMember()]
 
@@ -68,12 +73,20 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
         return queryset.order_by("-start_date")
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], permission_classes=[AllowAny])
     def standings(self, request, slug=None):
         """Tabla de posiciones del torneo"""
+        """Tabla de posiciones del torneo"""
+
+        # DEBUG: Ver qué permisos se están aplicando
+        print(f"User: {request.user}")
+        print(f"Auth: {request.auth}")
+        print(f"Is authenticated: {request.user.is_authenticated}")
+        print(f"Permission classes: {self.permission_classes}")
+        print(f"Get permissions result: {self.get_permissions()}")
         tournament = self.get_object()
         teams = Team.objects.filter(tournament=tournament).order_by(
-            "-points", "-goal_difference", "-goals_for", "name"
+            "-points", "-goals_for", "name"
         )
 
         standings = []
@@ -127,6 +140,67 @@ class TournamentViewSet(viewsets.ModelViewSet):
         serializer = MatchListSerializer(matches, many=True)
         return Response(serializer.data)
 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        tournament_name = instance.name
+
+        # Aquí podrías agregar lógica adicional, como borrar imágenes en S3
+        # o verificar condiciones especiales antes de borrar.
+
+        self.perform_destroy(instance)
+
+        return Response(
+            {
+                "message": f"Torneo '{tournament_name}' y todos sus datos asociados han sido eliminados."
+            },
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(
+            posted_by=self.request.user,
+            organization=self.request.user.organization,
+        )
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
+    def my_tournaments(self, request):
+        """
+        Endpoint: /api/v1/sports/tournaments/my_tournaments/
+        Solo para admins: ve todos los torneos (activos e inactivos) de su organización.
+        """
+        user = request.user
+
+        # Verificar que el usuario sea admin de la organización
+        if user.role not in ["manager"]:
+            print(f"DEBUG: User {user} is not an admin")
+            print(f"DEBUG: User role is {user.role}")
+            return Response(
+                {
+                    "error": "No tienes permisos de administrador para ver esta información."
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        else:
+            queryset = (
+                Tournament.objects.filter(posted_by=user.id)
+                .select_related("organization")
+                .annotate(
+                    teams_count=Count("teams", distinct=True),
+                    matches_count=Count("matches", distinct=True),
+                )
+                .order_by("-created_at")
+            )
+
+        # Aplicar paginación
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = TournamentListSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = TournamentListSerializer(queryset, many=True)
+        return Response(serializer.data)
+
 
 class TeamViewSet(viewsets.ModelViewSet):
     """ViewSet para equipos"""
@@ -134,12 +208,19 @@ class TeamViewSet(viewsets.ModelViewSet):
     queryset = Team.objects.all()
 
     def get_serializer_class(self):
+
         if self.action == "list":
             return TeamListSerializer
         return TeamDetailSerializer
 
     def get_permissions(self):
-        if self.action in ["list", "retrieve"]:
+        if self.action in [
+            "list",
+            "retrieve",
+            "players",
+            "matches",
+            "stats",
+        ]:
             return [AllowAny()]
         return [IsAuthenticated(), IsOrganizationMember()]
 
@@ -157,9 +238,10 @@ class TeamViewSet(viewsets.ModelViewSet):
         if self.request.user.is_authenticated and not self.request.user.is_superuser:
             queryset = queryset.filter(organization=self.request.user.organization)
 
+        # Filtrar por estado
         return queryset.order_by("-points", "name")
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], permission_classes=[AllowAny])
     def players(self, request, pk=None):
         """Jugadores del equipo"""
         team = self.get_object()
@@ -172,7 +254,7 @@ class TeamViewSet(viewsets.ModelViewSet):
         serializer = PlayerListSerializer(players, many=True)
         return Response(serializer.data)
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], permission_classes=[AllowAny])
     def matches(self, request, pk=None):
         """Partidos del equipo"""
         team = self.get_object()
@@ -227,7 +309,7 @@ class PlayerViewSet(viewsets.ModelViewSet):
 
         return queryset.order_by("jersey_number", "last_name")
 
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=["get"], permission_classes=[AllowAny])
     def stats(self, request, pk=None):
         """Estadísticas detalladas del jugador"""
         player = self.get_object()
