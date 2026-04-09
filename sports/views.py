@@ -11,8 +11,10 @@ from .serializers import (
     TournamentDetailSerializer,
     TeamListSerializer,
     TeamDetailSerializer,
+    TeamCreateUpdateSerializer,  # NUEVO
     PlayerListSerializer,
     PlayerDetailSerializer,
+    PlayerCreateUpdateSerializer,  # NUEVO
     MatchListSerializer,
     MatchDetailSerializer,
     MatchCreateUpdateSerializer,
@@ -42,7 +44,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == "create":
             return [IsAuthenticated()]
-        if self.action in ["list", "retrieve", "standings", "schedule"]:
+        if self.action in ["list", "retrieve", "standings", "schedule", "teams"]:
             return [AllowAny()]
         return [IsAuthenticated(), IsOrganizationMember()]
 
@@ -69,9 +71,39 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
         # Usuarios no autenticados solo ven activos/finalizados
         if not self.request.user.is_authenticated:
-            queryset = queryset.filter(status__in=["active", "finished"])
+            queryset = queryset.filter(
+                status__in=["active", "finished", "cancelled", "draft", "registration"]
+            )
+
+        # 2. Lógica de visibilidad (Aquí está el truco)
+        # Si la acción NO es 'my_tournaments', aplicamos restricciones de visibilidad pública
+        if self.action != "my_tournaments":
+            if not self.request.user.is_authenticated:
+                queryset = queryset.filter(status__in=["active", "finished"])
 
         return queryset.order_by("-start_date")
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        tournament_name = instance.name
+
+        # Aquí podrías agregar lógica adicional, como borrar imágenes en S3
+        # o verificar condiciones especiales antes de borrar.
+
+        self.perform_destroy(instance)
+
+        return Response(
+            {
+                "message": f"Torneo '{tournament_name}' y todos sus datos asociados han sido eliminados."
+            },
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(
+            posted_by=self.request.user,
+            organization=self.request.user.organization,
+        )
 
     @action(detail=True, methods=["get"], permission_classes=[AllowAny])
     def standings(self, request, slug=None):
@@ -140,28 +172,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
         serializer = MatchListSerializer(matches, many=True)
         return Response(serializer.data)
 
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        tournament_name = instance.name
-
-        # Aquí podrías agregar lógica adicional, como borrar imágenes en S3
-        # o verificar condiciones especiales antes de borrar.
-
-        self.perform_destroy(instance)
-
-        return Response(
-            {
-                "message": f"Torneo '{tournament_name}' y todos sus datos asociados han sido eliminados."
-            },
-            status=status.HTTP_204_NO_CONTENT,
-        )
-
-    def perform_create(self, serializer):
-        serializer.save(
-            posted_by=self.request.user,
-            organization=self.request.user.organization,
-        )
-
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
     def my_tournaments(self, request):
         """
@@ -182,15 +192,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             )
 
         else:
-            queryset = (
-                Tournament.objects.filter(posted_by=user.id)
-                .select_related("organization")
-                .annotate(
-                    teams_count=Count("teams", distinct=True),
-                    matches_count=Count("matches", distinct=True),
-                )
-                .order_by("-created_at")
-            )
+            queryset = self.get_queryset().filter(posted_by=user)
 
         # Aplicar paginación
         page = self.paginate_queryset(queryset)
@@ -201,14 +203,49 @@ class TournamentViewSet(viewsets.ModelViewSet):
         serializer = TournamentListSerializer(queryset, many=True)
         return Response(serializer.data)
 
+    @action(
+        detail=True,
+        methods=["get"],
+        permission_classes=[AllowAny],
+        authentication_classes=[],
+    )
+    def teams(self, request, slug=None):
+        """Listar equipos de un torneo específico con paginación de DRF"""
+        tournament = self.get_object()
+        queryset = (
+            Team.objects.filter(tournament=tournament)
+            .annotate(players_count=Count("players", filter=Q(players__is_active=True)))
+            .order_by("-points", "name")
+        )
+
+        # Filtro opcional por posición (si se usa 'top', cortamos el queryset)
+        top_only = request.query_params.get("top")
+        if top_only:
+            queryset = queryset[: int(top_only)]
+
+        # 1. Aplicar la paginación configurada en el ViewSet
+        page = self.paginate_queryset(queryset)
+
+        if page is not None:
+            # 2. Si hay paginación, serializamos solo la página
+            serializer = TeamListSerializer(page, many=True)
+            # 3. get_paginated_response devuelve la estructura con "count", "next", etc.
+            return self.get_paginated_response(serializer.data)
+
+        # Fallback en caso de que la paginación no esté configurada
+        serializer = TeamListSerializer(queryset, many=True)
+        return Response(serializer.data)
+
 
 class TeamViewSet(viewsets.ModelViewSet):
     """ViewSet para equipos"""
 
     queryset = Team.objects.all()
+    lookup_field = "slug"  # IMPORTANTE: Agregado para consistencia
 
     def get_serializer_class(self):
-
+        if self.action in ["create", "update", "partial_update"]:
+            return TeamCreateUpdateSerializer  # Usar serializer específico para crear
         if self.action == "list":
             return TeamListSerializer
         return TeamDetailSerializer
@@ -220,6 +257,7 @@ class TeamViewSet(viewsets.ModelViewSet):
             "players",
             "matches",
             "stats",
+            "teams",
         ]:
             return [AllowAny()]
         return [IsAuthenticated(), IsOrganizationMember()]
@@ -267,6 +305,17 @@ class TeamViewSet(viewsets.ModelViewSet):
         serializer = MatchListSerializer(matches, many=True)
         return Response(serializer.data)
 
+    def perform_create(self, serializer):
+        """CORREGIDO: Asignar posted_by y organization automáticamente"""
+        serializer.save(
+            posted_by=self.request.user,
+            organization=self.request.user.organization,
+        )
+
+    def perform_update(self, serializer):
+        """Mantener posted_by original en actualizaciones"""
+        serializer.save()
+
 
 class PlayerViewSet(viewsets.ModelViewSet):
     """ViewSet para jugadores"""
@@ -274,6 +323,8 @@ class PlayerViewSet(viewsets.ModelViewSet):
     queryset = Player.objects.all()
 
     def get_serializer_class(self):
+        if self.action in ["create", "update", "partial_update"]:
+            return PlayerCreateUpdateSerializer  # Usar serializer específico
         if self.action == "list":
             return PlayerListSerializer
         return PlayerDetailSerializer
@@ -350,6 +401,7 @@ class PlayerViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
+        # El tournament se obtiene del team automáticamente en el modelo
         serializer.save()
 
 

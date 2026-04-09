@@ -83,6 +83,7 @@ class TeamListSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "slug",
             "abbreviation",
             "logo",
             "tournament",
@@ -101,6 +102,10 @@ class TeamListSerializer(serializers.ModelSerializer):
             "runs",
             "runs_against",
             "average",
+            "posted_by",
+            "coach_name",
+            "coach_email",
+            "coach_phone",
         ]
 
     def get_position(self, obj):
@@ -128,6 +133,33 @@ class TeamDetailSerializer(serializers.ModelSerializer):
         """Lista de jugadores activos"""
         players = obj.players.filter(is_active=True)
         return PlayerListSerializer(players, many=True).data
+
+
+class TeamCreateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer para crear/actualizar equipos - posted_by es read_only"""
+
+    posted_by = serializers.PrimaryKeyRelatedField(read_only=True)
+    organization = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = Team
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "abbreviation",
+            "description",
+            "logo",
+            "primary_color",
+            "secondary_color",
+            "tournament",
+            "coach_name",
+            "coach_email",
+            "coach_phone",
+            "posted_by",
+            "organization",
+        ]
+        read_only_fields = ["posted_by", "organization"]
 
 
 class PlayerListSerializer(serializers.ModelSerializer):
@@ -170,6 +202,26 @@ class PlayerDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Player
         fields = "__all__"
+
+
+class PlayerCreateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer para crear/actualizar jugadores"""
+
+    class Meta:
+        model = Player
+        fields = [
+            "id",
+            "first_name",
+            "last_name",
+            "nickname",
+            "jersey_number",
+            "position",
+            "team",
+            "photo",
+            "birth_date",
+            "is_captain",
+            "is_active",
+        ]
 
 
 class MatchEventSerializer(serializers.ModelSerializer):
