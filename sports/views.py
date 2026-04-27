@@ -22,7 +22,7 @@ from .serializers import (
     StandingsSerializer,
     TournamentCreateSerializer,
 )
-from core.permissions import IsOrganizationMember
+from core.permissions import IsOrganizationMember, IsCoachOfTeam
 
 
 class TournamentViewSet(viewsets.ModelViewSet):
@@ -318,24 +318,28 @@ class TeamViewSet(viewsets.ModelViewSet):
 
 
 class PlayerViewSet(viewsets.ModelViewSet):
-    """ViewSet para jugadores"""
+    """ViewSet para jugadores - CRUD con permisos de Coach"""
 
     queryset = Player.objects.all()
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
-            return PlayerCreateUpdateSerializer  # Usar serializer específico
+            return PlayerCreateUpdateSerializer
         if self.action == "list":
             return PlayerListSerializer
         return PlayerDetailSerializer
 
     def get_permissions(self):
-        if self.action in ["list", "retrieve"]:
+        # Listar/ver detalle es público
+        if self.action in ["list", "retrieve", "stats"]:
             return [AllowAny()]
-        return [IsAuthenticated(), IsOrganizationMember()]
+        # Crear/actualizar/eliminar requiere ser coach del equipo
+        return [IsAuthenticated(), IsCoachOfTeam()]
 
     def get_queryset(self):
-        queryset = Player.objects.select_related("team", "tournament")
+        queryset = Player.objects.select_related(
+            "team", "tournament", "team__tournament"
+        )
 
         # Filtros
         team_id = self.request.query_params.get("team")
@@ -360,11 +364,32 @@ class PlayerViewSet(viewsets.ModelViewSet):
 
         return queryset.order_by("jersey_number", "last_name")
 
+    def perform_update(self, serializer):
+        """Mantener posted_by original"""
+        serializer.save()
+
+    def destroy(self, request, *args, **kwargs):
+        """Eliminar jugador - solo coach puede eliminar"""
+        player = self.get_object()
+
+        if not IsCoachOfTeam().has_object_permission(request, self, player):
+            return Response(
+                {"error": "Solo el coach del equipo puede eliminar jugadores"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        player_name = player.full_name
+        self.perform_destroy(player)
+
+        return Response(
+            {"message": f"Jugador '{player_name}' eliminado correctamente"},
+            status=status.HTTP_200_OK,
+        )
+
     @action(detail=True, methods=["get"], permission_classes=[AllowAny])
     def stats(self, request, pk=None):
         """Estadísticas detalladas del jugador"""
         player = self.get_object()
-
         # Calcular promedio de bateo para softbol
         stats = {
             "matches_played": player.matches_played,
@@ -388,12 +413,10 @@ class PlayerViewSet(viewsets.ModelViewSet):
         return Response(stats)
 
     def create(self, request, *args, **kwargs):
-        # Detectar si es una lista (bulk create) o un solo objeto
         is_many = isinstance(request.data, list)
-
         serializer = self.get_serializer(data=request.data, many=is_many)
         serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
+        self.perform_create(serializer)  # ← Esto SÍ está bien
 
         headers = self.get_success_headers(serializer.data)
         return Response(
@@ -401,8 +424,19 @@ class PlayerViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
-        # El tournament se obtiene del team automáticamente en el modelo
-        serializer.save()
+        """Asignar posted_by desde el usuario autenticado y tournament desde el team"""
+        team = serializer.validated_data.get("team")
+        tournament = serializer.validated_data.get("tournament")
+
+        if not tournament and team:
+            tournament = team.tournament
+
+        serializer.save(posted_by=self.request.user, tournament=tournament)
+
+    @property
+    def tournament_slug(self):
+        """Obtiene el slug del torneo automáticamente"""
+        return self.tournament.slug if self.tournament else None
 
 
 class MatchViewSet(viewsets.ModelViewSet):

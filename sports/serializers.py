@@ -95,6 +95,7 @@ class TeamListSerializer(serializers.ModelSerializer):
             "goals_for",
             "goals_against",
             "goal_difference",
+            "played",
             "points",
             "position",
             "players_count",
@@ -169,12 +170,15 @@ class PlayerListSerializer(serializers.ModelSerializer):
     position_display = serializers.CharField(
         source="get_position_display", read_only=True
     )
+    tournament_slug = serializers.CharField(source="tournament.slug", read_only=True)
 
     class Meta:
         model = Player
         fields = [
             "id",
             "full_name",
+            "first_name",
+            "last_name",
             "nickname",
             "jersey_number",
             "position",
@@ -187,6 +191,13 @@ class PlayerListSerializer(serializers.ModelSerializer):
             "goals",
             "assists",
             "average",
+            "yellow_cards",
+            "red_cards",
+            "is_active",
+            "posted_by",
+            "birth_date",
+            "tournament",
+            "tournament_slug",
         ]
 
 
@@ -198,6 +209,7 @@ class PlayerDetailSerializer(serializers.ModelSerializer):
     position_display = serializers.CharField(
         source="get_position_display", read_only=True
     )
+    tournament_slug = serializers.CharField(source="tournament.slug", read_only=True)
 
     class Meta:
         model = Player
@@ -206,6 +218,8 @@ class PlayerDetailSerializer(serializers.ModelSerializer):
 
 class PlayerCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer para crear/actualizar jugadores"""
+
+    posted_by = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = Player
@@ -216,11 +230,13 @@ class PlayerCreateUpdateSerializer(serializers.ModelSerializer):
             "nickname",
             "jersey_number",
             "position",
+            "tournament",
             "team",
             "photo",
             "birth_date",
             "is_captain",
             "is_active",
+            "posted_by",
         ]
 
 
