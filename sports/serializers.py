@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Tournament, Team, Player, Match, MatchEvent
+from .models import Tournament, Team, Player, Match, MatchEvent, MatchLineup
 
 
 class TournamentCreateSerializer(serializers.ModelSerializer):
@@ -359,3 +359,99 @@ class StandingsSerializer(serializers.Serializer):
     runs = serializers.IntegerField(required=False)
     runs_against = serializers.IntegerField(required=False)
     average = serializers.FloatField(required=False)
+
+
+# en tournaments/serializers.py
+
+
+class MatchLineupSerializer(serializers.ModelSerializer):
+    """Ver alineación de un partido"""
+
+    player_name = serializers.CharField(source="player.full_name", read_only=True)
+    player_photo = serializers.CharField(source="player.photo", read_only=True)
+    team_name = serializers.CharField(source="team.name", read_only=True)
+    position_display = serializers.CharField(
+        source="get_position_display", read_only=True
+    )
+    status = serializers.SerializerMethodField()  # ← NUEVO
+    status_display = serializers.SerializerMethodField()  # ← NUEVO
+
+    class Meta:
+        model = MatchLineup
+        fields = [
+            "id",
+            "match",
+            "team",
+            "team_name",
+            "player",
+            "player_name",
+            "player_photo",
+            "is_starter",
+            "position",
+            "position_display",
+            "jersey_number",
+            "substitution_minute",
+            "status",
+            "status_display",
+        ]
+
+    def get_status(self, obj):
+        if obj.is_starter and obj.is_on_field:
+            return "playing"  # titular jugando
+
+        if obj.is_starter and not obj.is_on_field:
+            return "substituted"  # titular que salió
+
+        if not obj.is_starter and obj.is_on_field:
+            return "entered"  # suplente que entró
+
+        if not obj.is_starter and not obj.is_on_field:
+            return "on_bench"  # suplente en banca
+
+        return "unknown"
+
+    def get_status_display(self, obj):
+        return dict(MatchLineup.STATUS_CHOICES).get(self.get_status(obj), "")
+
+
+class MatchLineupCreateSerializer(serializers.ModelSerializer):
+    """Crear/actualizar alineación"""
+
+    posted_by = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = MatchLineup
+        fields = [
+            "match",
+            "team",
+            "player",
+            "is_starter",
+            "position",
+            "jersey_number",
+            "substitution_minute",
+            "posted_by",
+        ]
+
+    def validate(self, data):
+        # El jugador debe pertenecer al equipo
+        if data["player"].team != data["team"]:
+            raise serializers.ValidationError("El jugador no pertenece a este equipo")
+        # El equipo debe pertenecer al partido
+        match = data["match"]
+        team = data["team"]
+        if team != match.home_team and team != match.away_team:
+            raise serializers.ValidationError("El equipo no participa en este partido")
+        return data
+
+
+class MatchLineupBulkCreateSerializer(serializers.Serializer):
+    """Crear la alineación completa de un equipo de una sola vez"""
+
+    team = serializers.PrimaryKeyRelatedField(queryset=Team.objects.all())
+    players = MatchLineupCreateSerializer(many=True)
+
+    def validate(self, data):
+        starters = [p for p in data["players"] if p.get("is_starter", True)]
+        if len(starters) > 11:  # Ajusta según el deporte
+            raise serializers.ValidationError("No puedes tener más de 11 titulares")
+        return data

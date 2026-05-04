@@ -338,3 +338,41 @@ class MatchEvent(TimeStampedModel):
 
     def __str__(self):
         return f"{self.event_type} - {self.match} ({self.minute}')"
+
+
+# en tournaments/models.py
+
+
+class MatchLineup(TimeStampedModel):
+    """
+    Alineación/Convocados por partido
+    """
+
+    match = models.ForeignKey(Match, on_delete=models.CASCADE, related_name="lineups")
+    team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="lineups")
+    player = models.ForeignKey(Player, on_delete=models.CASCADE, related_name="lineups")
+    posted_by = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="posted_lineups"
+    )
+
+    is_starter = models.BooleanField(default=True)  # Titular vs suplente
+    is_on_field = models.BooleanField(default=True)
+    position = models.CharField(
+        max_length=20, choices=Player.POSITION_CHOICES, blank=True
+    )
+    jersey_number = models.PositiveIntegerField(null=True, blank=True)
+
+    # Si entró como sustituto, en qué minuto
+    substitution_minute = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = "match_lineups"
+        unique_together = [
+            "match",
+            "player",
+        ]  # Un jugador no puede estar dos veces en el mismo partido
+        ordering = ["-is_starter", "jersey_number"]
+
+    def __str__(self):
+        role = "Titular" if self.is_starter else "Suplente"
+        return f"{self.player.full_name} - {self.match} ({role})"

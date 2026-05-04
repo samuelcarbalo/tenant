@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.db.models import Q, Count, Prefetch
 from django.utils import timezone
 
-from .models import Tournament, Team, Player, Match, MatchEvent
+from .models import Tournament, Team, Player, Match, MatchEvent, MatchLineup
 from .serializers import (
     TournamentListSerializer,
     TournamentDetailSerializer,
@@ -21,6 +21,8 @@ from .serializers import (
     MatchEventSerializer,
     StandingsSerializer,
     TournamentCreateSerializer,
+    MatchLineupSerializer,
+    MatchLineupCreateSerializer,
 )
 from core.permissions import IsOrganizationMember, IsCoachOfTeam
 
@@ -623,3 +625,247 @@ class MatchViewSet(viewsets.ModelViewSet):
     def finish_match(self, request, pk=None):
         """Finalizar partido"""
         return self.update_score(request, pk)
+
+    def perform_create(self, serializer):
+        """Asignar posted_by desde el usuario autenticado"""
+        serializer.save(posted_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        instance.delete()
+
+    @action(detail=True, methods=["get"], permission_classes=[AllowAny])
+    def lineup(self, request, pk=None):
+        """
+        Ver alineación del partido separada por equipo
+        GET /api/v1/sports/matches/{id}/lineup/
+        """
+        match = self.get_object()
+        lineups = MatchLineup.objects.filter(match=match).select_related(
+            "player", "team"
+        )
+
+        home_lineup = lineups.filter(team=match.home_team)
+        away_lineup = lineups.filter(team=match.away_team)
+
+        return Response(
+            {
+                "match_id": match.id,
+                "home_team": {
+                    "id": match.home_team.id,
+                    "name": match.home_team.name,
+                    "starters": MatchLineupSerializer(
+                        home_lineup.filter(is_starter=True), many=True
+                    ).data,
+                    "substitutes": MatchLineupSerializer(
+                        home_lineup.filter(is_starter=False), many=True
+                    ).data,
+                },
+                "away_team": {
+                    "id": match.away_team.id,
+                    "name": match.away_team.name,
+                    "starters": MatchLineupSerializer(
+                        away_lineup.filter(is_starter=True), many=True
+                    ).data,
+                    "substitutes": MatchLineupSerializer(
+                        away_lineup.filter(is_starter=False), many=True
+                    ).data,
+                },
+            }
+        )
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def set_lineup(self, request, pk=None):
+        """
+        Crear la alineación completa de UN equipo de una vez
+        POST /api/v1/sports/matches/{id}/set_lineup/
+
+        Body:
+        {
+            "team": 3,
+            "players": [
+                {"player": 42, "is_starter": true, "position": "goalkeeper", "jersey_number": 1},
+                {"player": 17, "is_starter": true, "position": "defender", "jersey_number": 4},
+                {"player": 23, "is_starter": false, "position": "forward", "jersey_number": 9}
+            ]
+        }
+        """
+        match = self.get_object()
+        team_id = request.data.get("team")
+        players_data = request.data.get("players", [])
+
+        # Validar que el equipo pertenece al partido
+        if not Team.objects.filter(
+            id=team_id, id__in=[match.home_team_id, match.away_team_id]
+        ).exists():
+            return Response(
+                {"error": "El equipo no participa en este partido"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        created = []
+        errors = []
+
+        for player_data in players_data:
+            data = {"match": match.id, "team": team_id, **player_data}
+            serializer = MatchLineupCreateSerializer(data=data)
+            if serializer.is_valid():
+                lineup = serializer.save(posted_by=request.user)
+                created.append(MatchLineupSerializer(lineup).data)
+            else:
+                errors.append(
+                    {"player": player_data.get("player"), "errors": serializer.errors}
+                )
+
+        return Response(
+            {
+                "created": created,
+                "errors": errors,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["delete"], permission_classes=[IsAuthenticated])
+    def clear_lineup(self, request, pk=None):
+        """
+        Borrar la alineación de un equipo para rehacer
+        DELETE /api/v1/sports/matches/{id}/clear_lineup/?team=3
+        """
+        match = self.get_object()
+        team_id = request.query_params.get("team")
+
+        if not team_id:
+            return Response(
+                {"error": "Debes especificar el equipo con ?team={id}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        deleted, _ = MatchLineup.objects.filter(match=match, team_id=team_id).delete()
+
+        return Response({"deleted": deleted})
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def substitute_player(self, request, pk=None):
+        """
+        Sustituir un jugador durante el partido
+        POST /api/v1/sports/matches/{id}/substitute_player/
+
+        Body:
+        {
+            "team": 3,
+            "player_out": 17,
+            "player_in": 23,
+            "minute": 65
+        }
+        """
+        match = self.get_object()
+        team_id = request.data.get("team")
+        player_out_id = request.data.get("player_out")
+        player_in_id = request.data.get("player_in")
+        minute = request.data.get("minute")
+
+        # --- Validaciones ---
+        if not all([team_id, player_out_id, player_in_id, minute]):
+            return Response(
+                {"error": "team, player_out, player_in y minute son requeridos"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validar que el equipo juega en este partido
+        if str(match.home_team_id) != str(team_id) and str(match.away_team_id) != str(
+            team_id
+        ):
+            return Response(
+                {"error": "El equipo no participa en este partido"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validar que player_out está en el lineup como titular o ya entró
+        lineup_out = MatchLineup.objects.filter(
+            match=match,
+            team_id=team_id,
+            player_id=player_out_id,
+        ).first()
+
+        if not lineup_out:
+            return Response(
+                {
+                    "error": "El jugador que sale no está en la alineación de este partido"
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validar que player_in está en el lineup como suplente
+        lineup_in = MatchLineup.objects.filter(
+            match=match,
+            team_id=team_id,
+            player_id=player_in_id,
+            is_starter=False,
+        ).first()
+
+        if not lineup_in:
+            return Response(
+                {"error": "El jugador que entra no está registrado como suplente"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validar que player_in no haya entrado ya
+        already_subbed_in = MatchEvent.objects.filter(
+            match=match, player_id=player_in_id, event_type="substitution_in"
+        ).exists()
+
+        if already_subbed_in:
+            return Response(
+                {"error": "Este jugador ya entró como sustituto anteriormente"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # --- Ejecutar sustitución ---
+
+        # 1. Registrar eventos
+        MatchEvent.objects.create(
+            match=match,
+            team_id=team_id,
+            player_id=player_out_id,
+            event_type="substitution_out",
+            minute=minute,
+            posted_by=request.user,
+            description=f"Sale al minuto {minute}",
+        )
+        MatchEvent.objects.create(
+            match=match,
+            team_id=team_id,
+            player_id=player_in_id,
+            event_type="substitution_in",
+            minute=minute,
+            posted_by=request.user,
+            description=f"Entra al minuto {minute}",
+        )
+
+        # 2. Actualizar lineup: marcar al que sale, activar al que entra
+        lineup_out.is_on_field = False
+        lineup_out.substitution_minute = minute
+        lineup_out.save()
+
+        # El que entra: sigue siendo is_starter=False (era suplente) pero ahora está en cancha
+        lineup_in.is_on_field = True
+        lineup_in.substitution_minute = minute
+        lineup_in.save()
+
+        return Response(
+            {
+                "message": "Sustitución registrada correctamente",
+                "minute": minute,
+                "player_out": {
+                    "id": player_out_id,
+                    "name": lineup_out.player.full_name,
+                },
+                "player_in": {
+                    "id": player_in_id,
+                    "name": lineup_in.player.full_name,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
