@@ -304,8 +304,12 @@ class MatchDetailSerializer(serializers.ModelSerializer):
     home_team_detail = TeamListSerializer(source="home_team", read_only=True)
     away_team_detail = TeamListSerializer(source="away_team", read_only=True)
     tournament_name = serializers.CharField(source="tournament.name", read_only=True)
+    tournament_slug = serializers.CharField(source="tournament.slug", read_only=True)
     events = MatchEventSerializer(many=True, read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    # Logos
+    home_team_logo = serializers.CharField(source="home_team.logo", read_only=True)
+    away_team_logo = serializers.CharField(source="away_team.logo", read_only=True)
 
     class Meta:
         model = Match
