@@ -348,6 +348,15 @@ class MatchLineup(TimeStampedModel):
     Alineación/Convocados por partido
     """
 
+    # Agrega esto si necesitas un campo de estado
+    STATUS_CHOICES = [
+        ("active", "Activo"),
+        ("substituted", "Sustituido"),
+        ("injured", "Lesionado"),
+        ("suspended", "Suspendido"),
+    ]
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="active")
+
     match = models.ForeignKey(Match, on_delete=models.CASCADE, related_name="lineups")
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="lineups")
     player = models.ForeignKey(Player, on_delete=models.CASCADE, related_name="lineups")
