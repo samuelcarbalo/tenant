@@ -581,22 +581,30 @@ class MatchViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def add_event(self, request, pk=None):
-        """Agregar evento al partido (gol, tarjeta, etc.)"""
         match = self.get_object()
-
         serializer = MatchEventSerializer(data=request.data)
         if serializer.is_valid():
-            event = serializer.save(match=match)
-
-            # Actualizar estadísticas del jugador si aplica
+            event = serializer.save(match=match, posted_by=request.user)
             if event.player:
                 self._update_player_stats(event)
-
+            self._update_score_from_event(event)  # ← AGREGAR
             return Response(
                 MatchEventSerializer(event).data, status=status.HTTP_201_CREATED
             )
-
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def _update_score_from_event(self, event):
+        """Actualizar marcador automáticamente según el evento"""
+        if event.event_type != "goal":
+            return
+
+        match = event.match
+        if event.team == match.home_team:
+            match.home_score = (match.home_score or 0) + 1
+        elif event.team == match.away_team:
+            match.away_score = (match.away_score or 0) + 1
+
+        match.save(update_fields=["home_score", "away_score"])
 
     def _update_player_stats(self, event):
         """Actualizar estadísticas del jugador"""
@@ -802,12 +810,30 @@ class MatchViewSet(viewsets.ModelViewSet):
             match=match,
             team_id=team_id,
             player_id=player_in_id,
-            is_starter=False,
         ).first()
 
+        # Si no está en el lineup pero pertenece al equipo, lo agregamos como suplente
         if not lineup_in:
+            from .models import Player
+
+            player_in = Player.objects.filter(id=player_in_id, team_id=team_id).first()
+            if not player_in:
+                return Response(
+                    {"error": "El jugador no pertenece a este equipo"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            lineup_in = MatchLineup.objects.create(
+                match=match,
+                team_id=team_id,
+                player=player_in,
+                is_starter=False,
+                is_on_field=False,
+                posted_by=request.user,
+            )
+
+        if lineup_in.is_starter and lineup_in.is_on_field:
             return Response(
-                {"error": "El jugador que entra no está registrado como suplente"},
+                {"error": "Este jugador ya está jugando como titular"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
