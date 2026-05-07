@@ -525,6 +525,7 @@ class MatchViewSet(viewsets.ModelViewSet):
             match.away_runs = away_runs
 
         match.status = "finished"
+        match.finished_at = timezone.now()
         match.save()
 
         # Actualizar estadísticas de equipos
@@ -626,8 +627,15 @@ class MatchViewSet(viewsets.ModelViewSet):
         """Iniciar partido (cambiar estado a 'live')"""
         match = self.get_object()
         match.status = "live"
+        match.started_at = timezone.now()
         match.save()
-        return Response({"status": "Partido iniciado", "match_id": str(match.id)})
+        return Response(
+            {
+                "status": "Partido iniciado",
+                "match_id": str(match.id),
+                "started_at": match.started_at,
+            }
+        )
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def finish_match(self, request, pk=None):
@@ -768,13 +776,37 @@ class MatchViewSet(viewsets.ModelViewSet):
             "minute": 65
         }
         """
+        """
+        Sustituir un jugador durante el partido
+        POST /api/v1/sports/matches/{id}/substitute_player/
+
+        Body:
+        {
+            "team": 3,
+            "player_out": 17,
+            "player_in": 23,
+            "minute": 65
+        }
+        """
+        """
+        Sustituir un jugador durante el partido
+        POST /api/v1/sports/matches/{id}/substitute_player/
+
+        Body:
+        {
+            "team": 3,
+            "player_out": 17,
+            "player_in": 23,
+            "minute": 65
+        }
+        """
         match = self.get_object()
         team_id = request.data.get("team")
         player_out_id = request.data.get("player_out")
         player_in_id = request.data.get("player_in")
         minute = request.data.get("minute")
 
-        # --- Validaciones ---
+        # --- Validaciones básicas ---
         if not all([team_id, player_out_id, player_in_id, minute]):
             return Response(
                 {"error": "team, player_out, player_in y minute son requeridos"},
@@ -790,7 +822,7 @@ class MatchViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Validar que player_out está en el lineup como titular o ya entró
+        # --- Validar jugador que SALE ---
         lineup_out = MatchLineup.objects.filter(
             match=match,
             team_id=team_id,
@@ -805,7 +837,14 @@ class MatchViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Validar que player_in está en el lineup como suplente
+        # Validar que el jugador que sale ESTÁ en cancha actualmente
+        if not lineup_out.is_on_field:
+            return Response(
+                {"error": "El jugador que sale no está actualmente en el campo"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # --- Validar jugador que ENTRA ---
         lineup_in = MatchLineup.objects.filter(
             match=match,
             team_id=team_id,
@@ -831,20 +870,10 @@ class MatchViewSet(viewsets.ModelViewSet):
                 posted_by=request.user,
             )
 
-        if lineup_in.is_starter and lineup_in.is_on_field:
+        # Validar que el jugador que entra NO está actualmente en cancha
+        if lineup_in.is_on_field:
             return Response(
-                {"error": "Este jugador ya está jugando como titular"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Validar que player_in no haya entrado ya
-        already_subbed_in = MatchEvent.objects.filter(
-            match=match, player_id=player_in_id, event_type="substitution_in"
-        ).exists()
-
-        if already_subbed_in:
-            return Response(
-                {"error": "Este jugador ya entró como sustituto anteriormente"},
+                {"error": "Este jugador ya está jugando actualmente"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -870,14 +899,13 @@ class MatchViewSet(viewsets.ModelViewSet):
             description=f"Entra al minuto {minute}",
         )
 
-        # 2. Actualizar lineup: marcar al que sale, activar al que entra
+        # 2. Actualizar lineup
         lineup_out.is_on_field = False
-        lineup_out.substitution_minute = minute
+        lineup_out.substitution_minute = minute  # Último minuto en que salió
         lineup_out.save()
 
-        # El que entra: sigue siendo is_starter=False (era suplente) pero ahora está en cancha
         lineup_in.is_on_field = True
-        lineup_in.substitution_minute = minute
+        lineup_in.substitution_minute = minute  # Último minuto en que entró
         lineup_in.save()
 
         return Response(

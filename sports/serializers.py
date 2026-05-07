@@ -292,6 +292,8 @@ class MatchListSerializer(serializers.ModelSerializer):
             "away_runs",  # Softbol
             "match_date",
             "venue",
+            "started_at",
+            "finished_at",
             "status",
             "status_display",
             "round_number",

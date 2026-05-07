@@ -247,6 +247,8 @@ class Match(TimeStampedModel):
     match_date = models.DateTimeField()
     venue = models.CharField(max_length=255, blank=True)
     stadium = models.CharField(max_length=255, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
 
     # Resultado
     home_score = models.PositiveIntegerField(null=True, blank=True)
