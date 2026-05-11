@@ -2,6 +2,7 @@ from django.db import models
 from core.models import TimeStampedModel
 from organizations.models import Organization
 from authentication.models import User
+from django.utils import timezone
 
 
 class Tournament(TimeStampedModel):
@@ -387,3 +388,64 @@ class MatchLineup(TimeStampedModel):
     def __str__(self):
         role = "Titular" if self.is_starter else "Suplente"
         return f"{self.player.full_name} - {self.match} ({role})"
+
+
+class MatchPeriod(TimeStampedModel):
+    """
+    Períodos de un partido (1T, descanso, 2T, tiempo extra, etc.)
+    """
+
+    match = models.ForeignKey(Match, on_delete=models.CASCADE, related_name="periods")
+    period_number = models.PositiveIntegerField()  # 1, 2, 3...
+    name = models.CharField(max_length=50)  # "1er Tiempo", "2do Tiempo", etc.
+
+    # Tiempos
+    started_at = models.DateTimeField(null=True, blank=True)
+    paused_at = models.DateTimeField(null=True, blank=True)
+    resumed_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    # Tiempo acumulado en segundos antes de la última pausa
+    elapsed_seconds_before_pause = models.PositiveIntegerField(default=0)
+
+    is_active = models.BooleanField(default=False)
+    is_completed = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "match_periods"
+        ordering = ["period_number"]
+        unique_together = ["match", "period_number"]
+
+    def __str__(self):
+        return f"{self.match} - {self.name}"
+
+    @property
+    def elapsed_seconds(self):
+        """Tiempo transcurrido real considerando pausas"""
+        if not self.started_at:
+            return 0
+
+        # Si está pausado
+        if self.paused_at and not self.resumed_at:
+            base = self.elapsed_seconds_before_pause
+            last_segment = (self.paused_at - self.started_at).total_seconds()
+            # Restar tiempo de pausas anteriores
+            return int(base + last_segment)
+
+        # Si está en curso
+        if self.started_at and not self.ended_at:
+            now = timezone.now()
+            reference = self.resumed_at or self.started_at
+            base = self.elapsed_seconds_before_pause
+            current_segment = (now - reference).total_seconds()
+            return int(base + current_segment)
+
+        # Si terminó
+        if self.ended_at:
+            return self.elapsed_seconds_before_pause
+
+        return 0
+
+    @property
+    def elapsed_minutes(self):
+        return self.elapsed_seconds // 60

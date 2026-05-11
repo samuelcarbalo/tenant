@@ -4,8 +4,16 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.db.models import Q, Count, Prefetch
 from django.utils import timezone
-
-from .models import Tournament, Team, Player, Match, MatchEvent, MatchLineup
+from django.db import transaction
+from .models import (
+    Tournament,
+    Team,
+    Player,
+    Match,
+    MatchEvent,
+    MatchLineup,
+    MatchPeriod,
+)
 from .serializers import (
     TournamentListSerializer,
     TournamentDetailSerializer,
@@ -922,4 +930,164 @@ class MatchViewSet(viewsets.ModelViewSet):
                 },
             },
             status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def start_period(self, request, pk=None):
+        """Iniciar un período del partido"""
+        match = self.get_object()
+        period_number = request.data.get("period_number", 1)
+        period_name = request.data.get("name", "1er Tiempo")
+
+        # Verificar que el partido esté en vivo
+        if match.status != "live":
+            return Response(
+                {"error": "El partido no está en vivo"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            # Desactivar períodos anteriores
+            MatchPeriod.objects.filter(match=match, is_active=True).update(
+                is_active=False, ended_at=timezone.now()
+            )
+
+            # Crear o activar el período
+            period, created = MatchPeriod.objects.get_or_create(
+                match=match, period_number=period_number, defaults={"name": period_name}
+            )
+
+            if not created:
+                period.name = period_name
+
+            period.started_at = timezone.now()
+            period.paused_at = None
+            period.resumed_at = None
+            period.ended_at = None
+            period.is_active = True
+            period.is_completed = False
+            period.save()
+
+            # Si es el primer período, actualizar started_at del match si no existe
+            if period_number == 1 and not match.started_at:
+                match.started_at = timezone.now()
+                match.save(update_fields=["started_at"])
+
+        return Response(
+            {
+                "period": period.period_number,
+                "name": period.name,
+                "started_at": period.started_at,
+                "elapsed_minutes": period.elapsed_minutes,
+            }
+        )
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def pause_period(self, request, pk=None):
+        """Pausar el período actual"""
+        match = self.get_object()
+
+        period = MatchPeriod.objects.filter(match=match, is_active=True).first()
+        if not period:
+            return Response(
+                {"error": "No hay período activo"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Calcular tiempo transcurrido hasta ahora
+        reference = period.resumed_at or period.started_at
+        current_segment = (timezone.now() - reference).total_seconds()
+
+        period.elapsed_seconds_before_pause += int(current_segment)
+        period.paused_at = timezone.now()
+        period.resumed_at = None  # Resetear para próxima reanudación
+        period.save()
+
+        return Response(
+            {
+                "period": period.period_number,
+                "paused_at": period.paused_at,
+                "elapsed_minutes": period.elapsed_minutes,
+                "elapsed_seconds": period.elapsed_seconds,
+            }
+        )
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def resume_period(self, request, pk=None):
+        """Reanudar el período pausado"""
+        match = self.get_object()
+
+        period = MatchPeriod.objects.filter(match=match, is_active=True).first()
+        if not period or not period.paused_at:
+            return Response(
+                {"error": "No hay período pausado"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        period.resumed_at = timezone.now()
+        period.paused_at = None
+        period.save()
+
+        return Response(
+            {
+                "period": period.period_number,
+                "resumed_at": period.resumed_at,
+                "elapsed_minutes": period.elapsed_minutes,
+            }
+        )
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def end_period(self, request, pk=None):
+        """Finalizar el período actual (ej: fin del 1T)"""
+        match = self.get_object()
+
+        period = MatchPeriod.objects.filter(match=match, is_active=True).first()
+        if not period:
+            return Response(
+                {"error": "No hay período activo"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Calcular tiempo final
+        reference = period.resumed_at or period.started_at
+        if period.paused_at:
+            reference = None  # Está pausado, no hay segmento actual
+
+        if reference:
+            current_segment = (timezone.now() - reference).total_seconds()
+            period.elapsed_seconds_before_pause += int(current_segment)
+
+        period.ended_at = timezone.now()
+        period.is_active = False
+        period.is_completed = True
+        period.save()
+
+        return Response(
+            {
+                "period": period.period_number,
+                "ended_at": period.ended_at,
+                "elapsed_minutes": period.elapsed_minutes,
+                "elapsed_seconds": period.elapsed_seconds,
+            }
+        )
+
+    @action(detail=True, methods=["get"], permission_classes=[AllowAny])
+    def periods(self, request, pk=None):
+        """Obtener todos los períodos del partido"""
+        match = self.get_object()
+        periods = match.periods.all()
+
+        return Response(
+            [
+                {
+                    "period_number": p.period_number,
+                    "name": p.name,
+                    "started_at": p.started_at,
+                    "paused_at": p.paused_at,
+                    "resumed_at": p.resumed_at,
+                    "ended_at": p.ended_at,
+                    "elapsed_minutes": p.elapsed_minutes,
+                    "elapsed_seconds": p.elapsed_seconds,
+                    "is_active": p.is_active,
+                    "is_completed": p.is_completed,
+                }
+                for p in periods
+            ]
         )
