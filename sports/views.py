@@ -246,6 +246,79 @@ class TournamentViewSet(viewsets.ModelViewSet):
         serializer = TeamListSerializer(queryset, many=True)
         return Response(serializer.data)
 
+    @action(detail=True, methods=["get"], permission_classes=[AllowAny])
+    def player_stats(self, request, slug=None):
+        """
+        Estadísticas agregadas de jugadores del torneo
+        GET /api/v1/sports/tournaments/{slug}/player_stats/
+        """
+        tournament = self.get_object()
+
+        # Jugadores del torneo con stats
+        players = (
+            Player.objects.filter(tournament=tournament, is_active=True)
+            .select_related("team")
+            .order_by("-goals", "-yellow_cards", "-red_cards")
+        )
+
+        # Top goleadores
+        top_scorers = players.filter(goals__gt=0).order_by("-goals")[:10]
+
+        # Top tarjetas amarillas
+        top_yellow_cards = players.filter(yellow_cards__gt=0).order_by("-yellow_cards")[
+            :10
+        ]
+
+        # Top tarjetas rojas
+        top_red_cards = players.filter(red_cards__gt=0).order_by("-red_cards")[:10]
+
+        # Stats de softbol
+        top_strikes = None
+        top_home_runs = None
+        if tournament.sport_type == "softball":
+            top_strikes = players.filter(strikes__gt=0).order_by("-strikes")[:10]
+            top_home_runs = players.filter(home_runs__gt=0).order_by("-home_runs")[:10]
+
+        def serialize_players(queryset, stat_field):
+            return [
+                {
+                    "id": p.id,
+                    "full_name": p.full_name,
+                    "first_name": p.first_name,
+                    "last_name": p.last_name,
+                    "jersey_number": p.jersey_number,
+                    "photo": p.photo,
+                    "team_name": p.team.name,
+                    "team_slug": p.team.slug,
+                    "position": p.position,
+                    "position_display": p.get_position_display(),
+                    stat_field: getattr(p, stat_field),
+                }
+                for p in queryset
+            ]
+
+        data = {
+            "tournament": {
+                "id": tournament.id,
+                "name": tournament.name,
+                "slug": tournament.slug,
+                "sport_type": tournament.sport_type,
+            },
+            "top_scorers": serialize_players(top_scorers, "goals"),
+            "top_yellow_cards": serialize_players(top_yellow_cards, "yellow_cards"),
+            "top_red_cards": serialize_players(top_red_cards, "red_cards"),
+        }
+
+        if tournament.sport_type == "softball":
+            data.update(
+                {
+                    "top_strikes": serialize_players(top_strikes, "strikes"),
+                    "top_home_runs": serialize_players(top_home_runs, "home_runs"),
+                }
+            )
+
+        return Response(data)
+
 
 class TeamViewSet(viewsets.ModelViewSet):
     """ViewSet para equipos"""
