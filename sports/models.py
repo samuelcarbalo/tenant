@@ -142,6 +142,8 @@ class Player(TimeStampedModel):
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
     nickname = models.CharField(max_length=100, blank=True)
+    id_number = models.CharField(max_length=50, blank=True, verbose_name="Cédula")
+    email = models.EmailField(blank=True, verbose_name="Correo electrónico")
     posted_by = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -376,13 +378,11 @@ class MatchLineup(TimeStampedModel):
 
     # Si entró como sustituto, en qué minuto
     substitution_minute = models.PositiveIntegerField(null=True, blank=True)
+    entry_number = models.PositiveIntegerField(default=1)
 
     class Meta:
         db_table = "match_lineups"
-        unique_together = [
-            "match",
-            "player",
-        ]  # Un jugador no puede estar dos veces en el mismo partido
+        unique_together = ["match", "player", "entry_number"]
         ordering = ["-is_starter", "jersey_number"]
 
     def __str__(self):
@@ -449,3 +449,84 @@ class MatchPeriod(TimeStampedModel):
     @property
     def elapsed_minutes(self):
         return self.elapsed_seconds // 60
+
+
+class AdvertisementBanner(TimeStampedModel):
+    """
+    Banners publicitarios / Imágenes publicitarias
+    Todos son públicos y visibles sin autenticación
+    """
+
+    tournament = models.ForeignKey(
+        Tournament,
+        on_delete=models.CASCADE,
+        related_name="banners",
+        null=True,
+        blank=True,
+        verbose_name="Torneo",
+    )
+
+    title = models.CharField(max_length=255, verbose_name="Título")
+    description = models.TextField(blank=True, verbose_name="Descripción")
+    image = models.URLField(verbose_name="URL de la imagen")
+    link_url = models.URLField(blank=True, verbose_name="URL de destino")
+
+    # Posición / ubicación en la app
+    POSITION_CHOICES = [
+        ("home_hero", "Home - Banner Principal"),
+        ("home_sidebar", "Home - Sidebar"),
+        ("tournament_detail", "Detalle de Torneo"),
+        ("match_detail", "Detalle de Partido"),
+        ("standings_top", "Tabla de Posiciones - Arriba"),
+        ("standings_bottom", "Tabla de Posiciones - Abajo"),
+        ("footer", "Footer"),
+        ("popup", "Popup Modal"),
+    ]
+    position = models.CharField(
+        max_length=30,
+        choices=POSITION_CHOICES,
+        default="home_hero",
+        verbose_name="Posición",
+    )
+
+    # Control de visibilidad y orden
+    is_active = models.BooleanField(default=True, verbose_name="Activo")
+    display_order = models.PositiveIntegerField(
+        default=0, verbose_name="Orden de visualización"
+    )
+
+    # Fechas de publicación
+    start_date = models.DateField(null=True, blank=True, verbose_name="Fecha inicio")
+    end_date = models.DateField(null=True, blank=True, verbose_name="Fecha fin")
+
+    # Métricas (opcional, para tracking)
+    clicks = models.PositiveIntegerField(default=0, verbose_name="Clicks")
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
+
+    # Quién lo creó (solo para auditoria interna, no afecta visibilidad)
+    posted_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="posted_banners",
+    )
+
+    class Meta:
+        db_table = "advertisement_banners"
+        ordering = ["position", "display_order", "-created_at"]
+        verbose_name = "Banner Publicitario"
+        verbose_name_plural = "Banners Publicitarios"
+
+    def __str__(self):
+        return f"{self.title} ({self.get_position_display()})"
+
+    @property
+    def is_visible(self):
+        """Verificar si el banner debe mostrarse según fechas y estado"""
+        today = timezone.now().date()
+        if not self.is_active:
+            return False
+        if self.start_date and today < self.start_date:
+            return False
+        if self.end_date and today > self.end_date:
+            return False
+        return True

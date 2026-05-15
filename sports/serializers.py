@@ -1,5 +1,13 @@
 from rest_framework import serializers
-from .models import Tournament, Team, Player, Match, MatchEvent, MatchLineup
+from .models import (
+    Tournament,
+    Team,
+    Player,
+    Match,
+    MatchEvent,
+    MatchLineup,
+    AdvertisementBanner,
+)
 
 
 class TournamentCreateSerializer(serializers.ModelSerializer):
@@ -180,6 +188,8 @@ class PlayerListSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "nickname",
+            "id_number",
+            "email",
             "jersey_number",
             "position",
             "position_display",
@@ -228,6 +238,8 @@ class PlayerCreateUpdateSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "nickname",
+            "id_number",
+            "email",
             "jersey_number",
             "position",
             "tournament",
@@ -381,6 +393,9 @@ class MatchLineupSerializer(serializers.ModelSerializer):
     )
     status = serializers.SerializerMethodField()  # ← NUEVO
     status_display = serializers.SerializerMethodField()  # ← NUEVO
+    minute_out = serializers.SerializerMethodField()  # ← NUEVO
+    minute_in = serializers.SerializerMethodField()
+    entry_number = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = MatchLineup
@@ -399,6 +414,9 @@ class MatchLineupSerializer(serializers.ModelSerializer):
             "substitution_minute",
             "status",
             "status_display",
+            "minute_out",
+            "minute_in",
+            "entry_number",
         ]
 
     def get_status(self, obj):
@@ -418,6 +436,22 @@ class MatchLineupSerializer(serializers.ModelSerializer):
 
     def get_status_display(self, obj):
         return dict(MatchLineup.STATUS_CHOICES).get(self.get_status(obj), "")
+
+    def get_minute_out(self, obj):
+        # Salió si estaba en cancha y ya no está (is_starter y no is_on_field)
+        if not obj.is_on_field and obj.substitution_minute is not None:
+            return obj.substitution_minute
+        return None
+
+    def get_minute_in(self, obj):
+        # Entró como sustituto (no es starter y está en cancha)
+        if (
+            not obj.is_starter
+            and obj.is_on_field
+            and obj.substitution_minute is not None
+        ):
+            return obj.substitution_minute
+        return None
 
 
 class MatchLineupCreateSerializer(serializers.ModelSerializer):
@@ -460,4 +494,76 @@ class MatchLineupBulkCreateSerializer(serializers.Serializer):
         starters = [p for p in data["players"] if p.get("is_starter", True)]
         if len(starters) > 11:  # Ajusta según el deporte
             raise serializers.ValidationError("No puedes tener más de 11 titulares")
+        return data
+
+
+class AdvertisementBannerSerializer(serializers.ModelSerializer):
+    """Serializer para listado público de banners"""
+
+    position_display = serializers.CharField(
+        source="get_position_display", read_only=True
+    )
+    is_visible = serializers.BooleanField(read_only=True)
+    posted_by_name = serializers.CharField(
+        source="posted_by.get_full_name", read_only=True
+    )
+    tournament_name = serializers.CharField(source="tournament.name", read_only=True)
+    tournament_slug = serializers.CharField(source="tournament.slug", read_only=True)
+
+    class Meta:
+        model = AdvertisementBanner
+        fields = [
+            "id",
+            "title",
+            "description",
+            "image",
+            "link_url",
+            "position",
+            "position_display",
+            "tournament",  # ← ID del torneo
+            "tournament_name",
+            "tournament_slug",
+            "is_active",
+            "display_order",
+            "start_date",
+            "end_date",
+            "is_visible",
+            "clicks",
+            "impressions",
+            "posted_by",  # ← ID del usuario
+            "posted_by_name",
+            "created_at",
+        ]
+
+
+class AdvertisementBannerCreateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer para crear/actualizar banners (requiere autenticación)"""
+
+    posted_by = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = AdvertisementBanner
+        fields = [
+            "id",
+            "title",
+            "description",
+            "image",
+            "link_url",
+            "position",
+            "is_active",
+            "display_order",
+            "start_date",
+            "end_date",
+            "tournament",
+            "posted_by",
+        ]
+
+    def validate(self, data):
+        # Validar que fecha fin sea posterior a fecha inicio
+        start = data.get("start_date")
+        end = data.get("end_date")
+        if start and end and end < start:
+            raise serializers.ValidationError(
+                {"end_date": "La fecha de fin debe ser posterior a la fecha de inicio."}
+            )
         return data

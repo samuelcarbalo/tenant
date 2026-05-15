@@ -2,7 +2,7 @@ from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from django.db.models import Q, Count, Prefetch
+from django.db.models import Q, Count, Prefetch, F
 from django.utils import timezone
 from django.db import transaction
 from .models import (
@@ -13,6 +13,7 @@ from .models import (
     MatchEvent,
     MatchLineup,
     MatchPeriod,
+    AdvertisementBanner,
 )
 from .serializers import (
     TournamentListSerializer,
@@ -31,6 +32,8 @@ from .serializers import (
     TournamentCreateSerializer,
     MatchLineupSerializer,
     MatchLineupCreateSerializer,
+    AdvertisementBannerCreateUpdateSerializer,
+    AdvertisementBannerSerializer,
 )
 from core.permissions import IsOrganizationMember, IsCoachOfTeam
 
@@ -54,7 +57,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == "create":
             return [IsAuthenticated()]
-        if self.action in ["list", "retrieve", "standings", "schedule", "teams"]:
+        if self.action in [
+            "list",
+            "retrieve",
+            "standings",
+            "schedule",
+            "teams",
+            "player_stats",
+        ]:
             return [AllowAny()]
         return [IsAuthenticated(), IsOrganizationMember()]
 
@@ -428,6 +438,13 @@ class PlayerViewSet(viewsets.ModelViewSet):
         team_id = self.request.query_params.get("team")
         if team_id:
             queryset = queryset.filter(team_id=team_id)
+        id_number = self.request.query_params.get("id_number")
+        if id_number:
+            queryset = queryset.filter(id_number__icontains=id_number)
+
+        email = self.request.query_params.get("email")
+        if email:
+            queryset = queryset.filter(email__icontains=email)
 
         tournament_slug = self.request.query_params.get("tournament")
         if tournament_slug:
@@ -810,6 +827,10 @@ class MatchViewSet(viewsets.ModelViewSet):
             serializer = MatchLineupCreateSerializer(data=data)
             if serializer.is_valid():
                 lineup = serializer.save(posted_by=request.user)
+                # ← AGREGAR ESTO: los titulares empiezan en cancha
+                if lineup.is_starter:
+                    lineup.is_on_field = True
+                    lineup.save(update_fields=["is_on_field"])
                 created.append(MatchLineupSerializer(lineup).data)
             else:
                 errors.append(
@@ -845,42 +866,6 @@ class MatchViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def substitute_player(self, request, pk=None):
-        """
-        Sustituir un jugador durante el partido
-        POST /api/v1/sports/matches/{id}/substitute_player/
-
-        Body:
-        {
-            "team": 3,
-            "player_out": 17,
-            "player_in": 23,
-            "minute": 65
-        }
-        """
-        """
-        Sustituir un jugador durante el partido
-        POST /api/v1/sports/matches/{id}/substitute_player/
-
-        Body:
-        {
-            "team": 3,
-            "player_out": 17,
-            "player_in": 23,
-            "minute": 65
-        }
-        """
-        """
-        Sustituir un jugador durante el partido
-        POST /api/v1/sports/matches/{id}/substitute_player/
-
-        Body:
-        {
-            "team": 3,
-            "player_out": 17,
-            "player_in": 23,
-            "minute": 65
-        }
-        """
         match = self.get_object()
         team_id = request.data.get("team")
         player_out_id = request.data.get("player_out")
@@ -888,7 +873,12 @@ class MatchViewSet(viewsets.ModelViewSet):
         minute = request.data.get("minute")
 
         # --- Validaciones básicas ---
-        if not all([team_id, player_out_id, player_in_id, minute]):
+        if (
+            team_id is None
+            or player_out_id is None
+            or player_in_id is None
+            or minute is None
+        ):
             return Response(
                 {"error": "team, player_out, player_in y minute son requeridos"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -904,55 +894,34 @@ class MatchViewSet(viewsets.ModelViewSet):
             )
 
         # --- Validar jugador que SALE ---
+        # Buscar el lineup ACTIVO (el que está en cancha actualmente)
         lineup_out = MatchLineup.objects.filter(
             match=match,
             team_id=team_id,
             player_id=player_out_id,
+            is_on_field=True,  # Debe estar en cancha
         ).first()
 
         if not lineup_out:
-            return Response(
-                {
-                    "error": "El jugador que sale no está en la alineación de este partido"
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Validar que el jugador que sale ESTÁ en cancha actualmente
-        if not lineup_out.is_on_field:
             return Response(
                 {"error": "El jugador que sale no está actualmente en el campo"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         # --- Validar jugador que ENTRA ---
-        lineup_in = MatchLineup.objects.filter(
-            match=match,
-            team_id=team_id,
-            player_id=player_in_id,
-        ).first()
-
-        # Si no está en el lineup pero pertenece al equipo, lo agregamos como suplente
-        if not lineup_in:
-            from .models import Player
-
-            player_in = Player.objects.filter(id=player_in_id, team_id=team_id).first()
-            if not player_in:
-                return Response(
-                    {"error": "El jugador no pertenece a este equipo"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            lineup_in = MatchLineup.objects.create(
+        # Buscar si ya tiene un lineup en este partido (puede haber salido antes)
+        existing_lineup_in = (
+            MatchLineup.objects.filter(
                 match=match,
                 team_id=team_id,
-                player=player_in,
-                is_starter=False,
-                is_on_field=False,
-                posted_by=request.user,
+                player_id=player_in_id,
             )
+            .order_by("-entry_number")
+            .first()
+        )
 
-        # Validar que el jugador que entra NO está actualmente en cancha
-        if lineup_in.is_on_field:
+        # Validar que NO está actualmente en cancha
+        if existing_lineup_in and existing_lineup_in.is_on_field:
             return Response(
                 {"error": "Este jugador ya está jugando actualmente"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -980,14 +949,45 @@ class MatchViewSet(viewsets.ModelViewSet):
             description=f"Entra al minuto {minute}",
         )
 
-        # 2. Actualizar lineup
+        # 2. Actualizar jugador que SALE
         lineup_out.is_on_field = False
-        lineup_out.substitution_minute = minute  # Último minuto en que salió
+        lineup_out.substitution_minute = minute
         lineup_out.save()
 
-        lineup_in.is_on_field = True
-        lineup_in.substitution_minute = minute  # Último minuto en que entró
-        lineup_in.save()
+        # 3. Crear o reactivar lineup del jugador que ENTRA
+        if existing_lineup_in:
+            # El jugador ya estuvo en el partido, crear nueva entrada
+            new_entry_number = existing_lineup_in.entry_number + 1
+            lineup_in = MatchLineup.objects.create(
+                match=match,
+                team_id=team_id,
+                player_id=player_in_id,
+                is_starter=False,
+                is_on_field=True,
+                entry_number=new_entry_number,
+                substitution_minute=minute,
+                posted_by=request.user,
+            )
+        else:
+            # Primera vez que entra
+            # Verificar que pertenece al equipo
+            from .models import Player
+
+            player_in = Player.objects.filter(id=player_in_id, team_id=team_id).first()
+            if not player_in:
+                return Response(
+                    {"error": "El jugador no pertenece a este equipo"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            lineup_in = MatchLineup.objects.create(
+                match=match,
+                team_id=team_id,
+                player=player_in,
+                is_starter=False,
+                is_on_field=True,
+                entry_number=1,
+                posted_by=request.user,
+            )
 
         return Response(
             {
@@ -1162,5 +1162,158 @@ class MatchViewSet(viewsets.ModelViewSet):
                     "is_completed": p.is_completed,
                 }
                 for p in periods
+            ]
+        )
+
+
+class AdvertisementBannerViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para Banners Publicitarios
+    - LIST / RETRIEVE: Público (sin autenticación)
+    - CREATE / UPDATE / DELETE: Requiere autenticación + ser miembro de organización
+    """
+
+    queryset = AdvertisementBanner.objects.all()
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["title", "description"]
+    ordering_fields = ["display_order", "created_at", "start_date"]
+    ordering = ["position", "display_order"]
+
+    def get_serializer_class(self):
+        if self.action in ["create", "update", "partial_update"]:
+            return AdvertisementBannerCreateUpdateSerializer
+        return AdvertisementBannerSerializer
+
+    def get_permissions(self):
+        # Todas las operaciones de lectura son públicas
+        if self.action in ["list", "retrieve", "by_position", "active", "track_click"]:
+            return [AllowAny()]
+        # Crear, editar, eliminar requieren autenticación
+        return [IsAuthenticated(), IsOrganizationMember()]
+
+    def get_queryset(self):
+        queryset = AdvertisementBanner.objects.all()
+
+        # Filtro por posición
+        position = self.request.query_params.get("position")
+        if position:
+            queryset = queryset.filter(position=position)
+
+        tournament_id = self.request.query_params.get("tournament")
+        if tournament_id:
+            queryset = queryset.filter(tournament_id=tournament_id)
+        # Filtro por activo/inactivo (solo admins ven inactivos)
+        active_only = self.request.query_params.get("active")
+        if active_only == "true":
+            today = timezone.now().date()
+            queryset = queryset.filter(
+                is_active=True,
+                start_date__lte=today,
+            ).filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
+
+        # Filtro por fecha
+        date_from = self.request.query_params.get("from")
+        date_to = self.request.query_params.get("to")
+        if date_from:
+            queryset = queryset.filter(start_date__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(end_date__lte=date_to)
+
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(posted_by=self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save()
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        banner_title = instance.title
+        self.perform_destroy(instance)
+        return Response(
+            {"message": f"Banner '{banner_title}' eliminado correctamente."},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=["get"], permission_classes=[AllowAny])
+    def by_position(self, request):
+        position = request.query_params.get("position")
+        tournament_id = request.query_params.get("tournament")  # ← NUEVO
+
+        if not position:
+            return Response(
+                {"error": "El parámetro 'position' es requerido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        today = timezone.now().date()
+        banners = AdvertisementBanner.objects.filter(
+            position=position,
+            is_active=True,
+            start_date__lte=today,
+        ).filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
+
+        # Filtrar por torneo si se proporciona
+        if tournament_id:
+            banners = banners.filter(tournament_id=tournament_id)
+
+        banners = banners.order_by("display_order")
+
+        # Incrementar impresiones
+        banner_ids = list(banners.values_list("id", flat=True))
+        AdvertisementBanner.objects.filter(id__in=banner_ids).update(
+            impressions=F("impressions") + 1
+        )
+
+        serializer = AdvertisementBannerSerializer(banners, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], permission_classes=[AllowAny])
+    def active(self, request):
+        """
+        Obtener SOLO banners activos y visibles actualmente
+        GET /api/v1/sports/banners/active/
+        """
+        today = timezone.now().date()
+        banners = (
+            AdvertisementBanner.objects.filter(
+                is_active=True,
+                start_date__lte=today,
+            )
+            .filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
+            .order_by("position", "display_order")
+        )
+
+        serializer = AdvertisementBannerSerializer(banners, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], permission_classes=[AllowAny])
+    def track_click(self, request, pk=None):
+        """
+        Registrar un click en el banner
+        POST /api/v1/sports/banners/{id}/track_click/
+        """
+        banner = self.get_object()
+        banner.clicks += 1
+        banner.save(update_fields=["clicks"])
+        return Response(
+            {
+                "message": "Click registrado",
+                "banner_id": str(banner.id),
+                "total_clicks": banner.clicks,
+            }
+        )
+
+    @action(detail=False, methods=["get"], permission_classes=[AllowAny])
+    def positions(self, request):
+        """
+        Listar las posiciones disponibles para banners
+        GET /api/v1/sports/banners/positions/
+        """
+        return Response(
+            [
+                {"value": value, "label": label}
+                for value, label in AdvertisementBanner.POSITION_CHOICES
             ]
         )
