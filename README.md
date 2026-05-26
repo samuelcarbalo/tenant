@@ -20,8 +20,8 @@ D:
 cd D:\app_multi_tenant\tenant
 D:\app_multi_tenant\venv\Scripts\activate
 git add .
-git commit -m "mensaje"
-git push origin main
+git commit -m "nueva estructura de apps"
+git push origin test
 
 # crear una app
 
