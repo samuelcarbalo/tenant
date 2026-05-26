@@ -97,6 +97,7 @@ class RegisterView(generics.CreateAPIView):
                     "full_name": user.full_name,
                     "company_name": user.company_name,
                     "role": user.role,
+                    "credits": user.credits,
                     "organization": {
                         "id": str(user.organization.id),
                         "name": user.organization.name,
@@ -187,6 +188,8 @@ def verify_token(request):
                 "id": str(user.id),
                 "email": user.email,
                 "role": user.role,
+                "credits": user.credits,
+                "user_type": user.user_type,
                 "organization": {
                     "id": str(user.organization.id) if user.organization else None,
                     "name": user.organization.name if user.organization else None,

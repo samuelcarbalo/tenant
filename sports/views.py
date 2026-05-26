@@ -120,10 +120,27 @@ class TournamentViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
-        serializer.save(
-            posted_by=self.request.user,
-            organization=self.request.user.organization,
-        )
+        from rest_framework.exceptions import ValidationError
+        from django.db import transaction
+
+        user = self.request.user
+        with transaction.atomic():
+            fresh_user = User.objects.select_for_update().get(id=user.id)
+            if fresh_user.credits < 50:
+                raise ValidationError(
+                    {
+                        "detail": f"No tienes suficientes créditos para crear un torneo. "
+                        f"Crear un torneo cuesta 50 créditos y actualmente tienes {fresh_user.credits} créditos."
+                    }
+                )
+            fresh_user.credits -= 50
+            fresh_user.save(update_fields=["credits"])
+            user.credits = fresh_user.credits
+
+            serializer.save(
+                posted_by=user,
+                organization=user.organization,
+            )
 
     @action(detail=True, methods=["get"], permission_classes=[AllowAny])
     def standings(self, request, slug=None):
@@ -1178,6 +1195,15 @@ class AdvertisementBannerViewSet(viewsets.ModelViewSet):
     search_fields = ["title", "description"]
     ordering_fields = ["display_order", "created_at", "start_date"]
     ordering = ["position", "display_order"]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        # Eliminar banners cuya fecha de fin ya expiró (cumplida la fecha de caducidad)
+        try:
+            today = timezone.now().date()
+            AdvertisementBanner.objects.filter(end_date__lt=today).delete()
+        except Exception:
+            pass
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:

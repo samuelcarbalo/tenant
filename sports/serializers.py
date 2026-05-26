@@ -1,3 +1,5 @@
+from datetime import timedelta
+from django.utils import timezone
 from rest_framework import serializers
 from .models import (
     Tournament,
@@ -215,6 +217,7 @@ class PlayerDetailSerializer(serializers.ModelSerializer):
     """Serializer detallado de jugador"""
 
     team_name = serializers.CharField(source="team.name", read_only=True)
+    team_slug = serializers.CharField(source="team.slug", read_only=True)
     tournament_name = serializers.CharField(source="tournament.name", read_only=True)
     position_display = serializers.CharField(
         source="get_position_display", read_only=True
@@ -559,10 +562,23 @@ class AdvertisementBannerCreateUpdateSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, data):
-        # Validar que fecha fin sea posterior a fecha inicio
+        # Obtener start_date de los datos o de la instancia existente o usar hoy
         start = data.get("start_date")
+        if not start:
+            if self.instance:
+                start = self.instance.start_date
+            else:
+                start = timezone.now().date()
+                data["start_date"] = start
+
+        # Si no se envía end_date, poner automáticamente 30 días después de start_date
         end = data.get("end_date")
-        if start and end and end < start:
+        if not end:
+            end = start + timedelta(days=30)
+            data["end_date"] = end
+
+        # Validar que fecha fin sea posterior a fecha inicio
+        if end < start:
             raise serializers.ValidationError(
                 {"end_date": "La fecha de fin debe ser posterior a la fecha de inicio."}
             )

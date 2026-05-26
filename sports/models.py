@@ -58,6 +58,8 @@ class Tournament(TimeStampedModel):
     logo = models.URLField(blank=True)
     banner = models.URLField(blank=True)
 
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
+
     class Meta:
         db_table = "tournaments"
         ordering = ["-start_date"]
@@ -120,6 +122,8 @@ class Team(TimeStampedModel):
     strikes_out = models.PositiveIntegerField(default=0)
     strikes_out_against = models.PositiveIntegerField(default=0)
     average_strikes_out = models.FloatField(default=0.0)
+
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
 
     class Meta:
         db_table = "teams"
@@ -211,6 +215,8 @@ class Player(TimeStampedModel):
     strikes_out_against = models.PositiveIntegerField(default=0)
     average_strikes_out = models.FloatField(default=0.0)
 
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
+
     class Meta:
         db_table = "players"
         ordering = ["jersey_number", "last_name", "first_name"]
@@ -284,6 +290,8 @@ class Match(TimeStampedModel):
     match_week = models.PositiveIntegerField(default=1)
     notes = models.TextField(blank=True)
 
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
+
     class Meta:
         db_table = "matches"
         ordering = ["match_date"]
@@ -337,6 +345,8 @@ class MatchEvent(TimeStampedModel):
     minute = models.PositiveIntegerField()  # Minuto del partido
     description = models.TextField(blank=True)
 
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
+
     class Meta:
         db_table = "match_events"
         ordering = ["minute", "created_at"]
@@ -380,6 +390,8 @@ class MatchLineup(TimeStampedModel):
     substitution_minute = models.PositiveIntegerField(null=True, blank=True)
     entry_number = models.PositiveIntegerField(default=1)
 
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
+
     class Meta:
         db_table = "match_lineups"
         unique_together = ["match", "player", "entry_number"]
@@ -410,6 +422,8 @@ class MatchPeriod(TimeStampedModel):
 
     is_active = models.BooleanField(default=False)
     is_completed = models.BooleanField(default=False)
+
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
 
     class Meta:
         db_table = "match_periods"

@@ -56,6 +56,7 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         null=True,
         help_text="Nombre de la empresa si el usuario es tipo empresa",
     )
+    credits = models.PositiveIntegerField(default=0)
     # Opcional: campo para distinguir tipo de usuario
     USER_TYPE_CHOICES = [
         ("person", "Persona"),

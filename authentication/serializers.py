@@ -37,6 +37,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             # AHORA: string si es empresa, null si no
             "company_name": self.user.company_name if self.user.company_name else False,
             "user_type": self.user.user_type,  # opcional
+            "credits": self.user.credits,
             "organization": {
                 "id": str(self.user.organization.id)
                 if self.user.organization
@@ -154,6 +155,9 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             validated_data["company_name"] = (
                 company_name if user_type == "company" else None
             )
+            if user_type == "company":
+                validated_data["role"] = "manager"
+                validated_data["credits"] = 50
 
             # Crear usuario - ahora sí llegan los campos
             user = User.objects.create_user(
@@ -228,6 +232,8 @@ class UserSerializer(serializers.ModelSerializer):
             "date_joined",
             "last_login",
             "company_name",
+            "credits",
+            "user_type",
         ]
         read_only_fields = ["id", "email", "organization", "date_joined"]
 

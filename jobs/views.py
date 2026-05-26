@@ -90,6 +90,8 @@ class JobOfferViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         from rest_framework.exceptions import ValidationError
+        from django.db import transaction
+        from authentication.models import User
 
         user = self.request.user
         print(f"DEBUG: User is {user} - Auth: {user.is_authenticated}")
@@ -108,12 +110,26 @@ class JobOfferViewSet(viewsets.ModelViewSet):
                 }
             )
 
-        # 3. Si llegamos aquí, guardamos con seguridad
-        serializer.save(
-            organization=user.organization,
-            posted_by=user,
-            company_name=company_name,
-        )
+        # 3. Validar y restar créditos
+        with transaction.atomic():
+            fresh_user = User.objects.select_for_update().get(id=user.id)
+            if fresh_user.credits < 5:
+                raise ValidationError(
+                    {
+                        "detail": f"No tienes suficientes créditos para publicar una oferta de empleo. "
+                        f"Publicar un empleo cuesta 5 créditos y actualmente tienes {fresh_user.credits} créditos."
+                    }
+                )
+            fresh_user.credits -= 5
+            fresh_user.save(update_fields=["credits"])
+            user.credits = fresh_user.credits
+
+            # 4. Si llegamos aquí, guardamos con seguridad
+            serializer.save(
+                organization=user.organization,
+                posted_by=user,
+                company_name=company_name,
+            )
 
     # ← AGREGAR ESTE MÉTODO
     def perform_update(self, serializer):

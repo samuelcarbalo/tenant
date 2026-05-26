@@ -37,12 +37,10 @@ del /s /q \*.pyc
 pip install -r requirements.txt
 
 # Crear migraciones de apps locales
-
-python manage.py makemigrations --settings=config.settings.development
-
 # Aplicar migraciones
-
+python manage.py makemigrations --settings=config.settings.development
 python manage.py migrate --settings=config.settings.development
+python manage.py runserver --settings=config.settings.development
 
 # Crear superusuario
 
