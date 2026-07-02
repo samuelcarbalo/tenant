@@ -83,9 +83,11 @@ class PaymentsAPITests(BaseIntegrationTestCase):
     def test_packages_public(self):
         res = self.anon.get(f"{API}/payments/packages/")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(res.data), 4)
+        self.assertEqual(len(res.data), 6)
         ids = {p["id"] for p in res.data}
-        self.assertEqual(ids, {"basico", "bronce", "plata", "oro"})
+        self.assertEqual(
+            ids, {"basico", "bronce", "plata", "oro", "platino", "diamante"}
+        )
 
     def test_mp_config(self):
         res = self.anon.get(f"{API}/payments/config/")

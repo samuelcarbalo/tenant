@@ -37,6 +37,24 @@ CREDIT_PACKAGES = {
         "savings_cop": 20000,
         "description": "Máximo ahorro para empresas con publicaciones frecuentes.",
     },
+    "platino": {
+        "id": "platino",
+        "name": "Paquete Platino",
+        "credits": 250,
+        "price_cop": 200000,
+        "badge": "Patrocinio mensual",
+        "savings_cop": 50000,
+        "description": "250 créditos — cubre un patrocinio de torneo por 1 mes.",
+    },
+    "diamante": {
+        "id": "diamante",
+        "name": "Paquete Diamante",
+        "credits": 450,
+        "price_cop": 350000,
+        "badge": "Patrocinio bimestral",
+        "savings_cop": 100000,
+        "description": "450 créditos — cubre el patrocinio exclusivo por 2 meses.",
+    },
 }
 
 # Costos internos de consumo
