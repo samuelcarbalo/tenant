@@ -3,6 +3,11 @@ from django.utils import timezone
 from rest_framework import serializers
 from .models import (
     Tournament,
+    TournamentPhase,
+    CompetitionGroup,
+    GroupMembership,
+    Bracket,
+    BracketNode,
     Team,
     Player,
     Match,
@@ -13,6 +18,9 @@ from .models import (
 
 
 class TournamentCreateSerializer(serializers.ModelSerializer):
+    format_template = serializers.CharField(required=False, allow_blank=True, default="")
+    format_group_count = serializers.IntegerField(required=False, default=1, write_only=True)
+
     class Meta:
         model = Tournament
         fields = [
@@ -28,6 +36,10 @@ class TournamentCreateSerializer(serializers.ModelSerializer):
             "max_players_per_team",
             "logo",
             "banner",
+            "structure_mode",
+            "format_template",
+            "format_group_count",
+            "scoring_config",
         ]
 
 
@@ -62,6 +74,8 @@ class TournamentListSerializer(serializers.ModelSerializer):
             "teams_count",
             "matches_count",
             "posted_by",
+            "structure_mode",
+            "format_template",
         ]
 
 
@@ -312,6 +326,10 @@ class MatchListSerializer(serializers.ModelSerializer):
             "status",
             "status_display",
             "round_number",
+            "match_week",
+            "match_type",
+            "phase",
+            "group",
         ]
 
 
@@ -333,6 +351,156 @@ class MatchDetailSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
+class GroupMembershipSerializer(serializers.ModelSerializer):
+    team = TeamListSerializer(read_only=True)
+    team_id = serializers.PrimaryKeyRelatedField(
+        queryset=Team.objects.all(), source="team", write_only=True
+    )
+
+    class Meta:
+        model = GroupMembership
+        fields = ["id", "team", "team_id", "seed"]
+
+
+class CompetitionGroupSerializer(serializers.ModelSerializer):
+    memberships = GroupMembershipSerializer(many=True, read_only=True)
+    teams_count = serializers.IntegerField(source="memberships.count", read_only=True)
+
+    class Meta:
+        model = CompetitionGroup
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "order",
+            "max_teams",
+            "teams_count",
+            "memberships",
+        ]
+
+
+class BracketNodeSerializer(serializers.ModelSerializer):
+    round_display = serializers.CharField(source="get_round_display", read_only=True)
+    match = MatchListSerializer(read_only=True)
+    home_team = serializers.SerializerMethodField()
+    away_team = serializers.SerializerMethodField()
+    home_label = serializers.SerializerMethodField()
+    away_label = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BracketNode
+        fields = [
+            "id",
+            "round",
+            "round_display",
+            "position",
+            "match",
+            "home_source",
+            "away_source",
+            "home_team",
+            "away_team",
+            "home_label",
+            "away_label",
+        ]
+
+    def _resolve(self, obj, side):
+        from sports.services.advancement import resolve_team_source
+
+        source = obj.home_source if side == "home" else obj.away_source
+        tournament = obj.bracket.phase.tournament
+        from_phase = self.context.get("from_phase")
+        team = resolve_team_source(source, tournament, from_phase=from_phase)
+        if team:
+            return TeamListSerializer(team).data
+        return None
+
+    def get_home_team(self, obj):
+        return self._resolve(obj, "home")
+
+    def get_away_team(self, obj):
+        return self._resolve(obj, "away")
+
+    def _label(self, source):
+        if not source:
+            return "Por definir"
+        t = source.get("type")
+        if t == "group_rank":
+            return f"{source.get('rank')}° {source.get('group_slug', 'grupo')}"
+        if t == "overall_rank":
+            return f"{source.get('rank')}° fase regular"
+        if t == "bracket_winner":
+            return f"Ganador {source.get('round')} #{source.get('position')}"
+        if t == "team":
+            return "Equipo fijo"
+        return "Por definir"
+
+    def get_home_label(self, obj):
+        return self._label(obj.home_source)
+
+    def get_away_label(self, obj):
+        return self._label(obj.away_source)
+
+
+class BracketSerializer(serializers.ModelSerializer):
+    nodes = BracketNodeSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Bracket
+        fields = ["id", "name", "nodes"]
+
+
+class TournamentPhaseSerializer(serializers.ModelSerializer):
+    groups = CompetitionGroupSerializer(many=True, read_only=True)
+    bracket = BracketSerializer(read_only=True)
+    phase_type_display = serializers.CharField(
+        source="get_phase_type_display", read_only=True
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = TournamentPhase
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "phase_type",
+            "phase_type_display",
+            "order",
+            "status",
+            "status_display",
+            "config",
+            "advancement_rules",
+            "groups",
+            "bracket",
+        ]
+
+
+class TournamentStructureSerializer(serializers.Serializer):
+    structure_mode = serializers.CharField()
+    format_template = serializers.CharField()
+    phases = TournamentPhaseSerializer(many=True)
+
+
+class AssignTeamsToGroupSerializer(serializers.Serializer):
+    group_id = serializers.UUIDField()
+    team_ids = serializers.ListField(
+        child=serializers.UUIDField(), allow_empty=False
+    )
+
+
+class GenerateFixtureSerializer(serializers.Serializer):
+    phase_id = serializers.UUIDField()
+    group_id = serializers.UUIDField(required=False, allow_null=True)
+    match_date = serializers.DateTimeField()
+    venue = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class AdvancePhaseSerializer(serializers.Serializer):
+    from_phase = serializers.SlugField()
+    match_date = serializers.DateTimeField(required=False, allow_null=True)
+    venue = serializers.CharField(required=False, allow_blank=True, default="")
+
+
 class MatchCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer para crear/actualizar partidos"""
 
@@ -348,6 +516,9 @@ class MatchCreateUpdateSerializer(serializers.ModelSerializer):
             "round_number",
             "match_week",
             "notes",
+            "phase",
+            "group",
+            "match_type",
         ]
 
     def validate(self, data):

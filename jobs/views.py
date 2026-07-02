@@ -83,8 +83,15 @@ class JobOfferViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(organization__slug=org_slug)
         # Por defecto, mostrar solo activas y no expiradas
         show_expired = self.request.query_params.get("show_expired", "false")
+        my_offers = self.request.query_params.get("my_offers", "false")
         if show_expired.lower() != "true":
-            queryset = queryset.filter(is_active=True, expires_at__gt=timezone.now())
+            filters = {
+                "is_active": True,
+                "expires_at__gt": timezone.now(),
+            }
+            if my_offers.lower() != "true":
+                filters["moderation_status"] = "approved"
+            queryset = queryset.filter(**filters)
 
         return queryset
 

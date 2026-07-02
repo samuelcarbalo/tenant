@@ -32,6 +32,14 @@ urlpatterns = [
     ),  # Sin 'organizations/' aquí
     path("api/v1/jobs/", include("jobs.urls")),
     path("api/v1/sports/", include("sports.urls")),
+    path("api/v1/real-estate/", include("real_estate.urls")),
+    path("api/v1/messaging/", include("messaging.urls")),
+    path("api/v1/notifications/", include("notifications.urls")),
+    path("api/v1/payments/", include("payments.urls")),
+    path("api/v1/moderation/", include("moderation.urls")),
+    path("api/v1/advertising/", include("advertising.urls")),
+    path("api/v1/events/", include("events.urls")),
+    path("api/v1/contact/", include("contact.urls")),
 ]
 if settings.DEBUG:
     from django.conf.urls.static import static

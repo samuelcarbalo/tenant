@@ -2,11 +2,16 @@ from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.exceptions import ValidationError
 from django.db.models import Q, Count, Prefetch, F
 from django.utils import timezone
 from django.db import transaction
+from authentication.models import User
 from .models import (
     Tournament,
+    TournamentPhase,
+    CompetitionGroup,
+    GroupMembership,
     Team,
     Player,
     Match,
@@ -20,10 +25,10 @@ from .serializers import (
     TournamentDetailSerializer,
     TeamListSerializer,
     TeamDetailSerializer,
-    TeamCreateUpdateSerializer,  # NUEVO
+    TeamCreateUpdateSerializer,
     PlayerListSerializer,
     PlayerDetailSerializer,
-    PlayerCreateUpdateSerializer,  # NUEVO
+    PlayerCreateUpdateSerializer,
     MatchListSerializer,
     MatchDetailSerializer,
     MatchCreateUpdateSerializer,
@@ -34,7 +39,22 @@ from .serializers import (
     MatchLineupCreateSerializer,
     AdvertisementBannerCreateUpdateSerializer,
     AdvertisementBannerSerializer,
+    TournamentStructureSerializer,
+    TournamentPhaseSerializer,
+    CompetitionGroupSerializer,
+    AssignTeamsToGroupSerializer,
+    GenerateFixtureSerializer,
+    AdvancePhaseSerializer,
 )
+from .scoring import MatchResultService, StandingsService, get_scoring_config
+from .formats.templates import list_templates
+from .services.structure import (
+    apply_format_template,
+    assign_teams_to_group,
+    generate_round_robin_fixtures,
+)
+from .services.advancement import advance_phase as run_advance_phase, SourceResolutionError
+from sports.models import BracketNode
 from core.permissions import IsOrganizationMember, IsCoachOfTeam
 
 
@@ -64,6 +84,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
             "schedule",
             "teams",
             "player_stats",
+            "structure",
+            "format_templates",
+            "bracket",
         ]:
             return [AllowAny()]
         return [IsAuthenticated(), IsOrganizationMember()]
@@ -100,6 +123,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if self.action != "my_tournaments":
             if not self.request.user.is_authenticated:
                 queryset = queryset.filter(status__in=["active", "finished"])
+            queryset = queryset.filter(moderation_status="approved")
 
         return queryset.order_by("-start_date")
 
@@ -120,10 +144,12 @@ class TournamentViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
-        from rest_framework.exceptions import ValidationError
         from django.db import transaction
 
         user = self.request.user
+        format_template = serializer.validated_data.pop("format_template", "") or self.request.data.get("format_template", "")
+        format_group_count = serializer.validated_data.pop("format_group_count", 1)
+
         with transaction.atomic():
             fresh_user = User.objects.select_for_update().get(id=user.id)
             if fresh_user.credits < 50:
@@ -137,54 +163,228 @@ class TournamentViewSet(viewsets.ModelViewSet):
             fresh_user.save(update_fields=["credits"])
             user.credits = fresh_user.credits
 
-            serializer.save(
+            tournament = serializer.save(
                 posted_by=user,
                 organization=user.organization,
             )
 
+            if format_template and format_template not in ("", "legacy_league"):
+                apply_format_template(
+                    tournament,
+                    format_template,
+                    group_count=max(1, int(format_group_count or 1)),
+                )
+
     @action(detail=True, methods=["get"], permission_classes=[AllowAny])
     def standings(self, request, slug=None):
-        """Tabla de posiciones del torneo"""
-        """Tabla de posiciones del torneo"""
-
-        # DEBUG: Ver qué permisos se están aplicando
-        print(f"User: {request.user}")
-        print(f"Auth: {request.auth}")
-        print(f"Is authenticated: {request.user.is_authenticated}")
-        print(f"Permission classes: {self.permission_classes}")
-        print(f"Get permissions result: {self.get_permissions()}")
+        """Tabla de posiciones del torneo (global, por fase o por grupo)."""
         tournament = self.get_object()
-        teams = Team.objects.filter(tournament=tournament).order_by(
-            "-points", "-goals_for", "name"
-        )
+        phase = group = None
 
-        standings = []
-        for idx, team in enumerate(teams, 1):
-            data = {
-                "position": idx,
-                "team": team,
-                "played": team.played,
-                "won": team.won,
-                "drawn": team.drawn,
-                "lost": team.lost,
-                "goals_for": team.goals_for,
-                "goals_against": team.goals_against,
-                "goal_difference": team.goal_difference,
-                "points": team.points,
-            }
-            # Agregar stats de softbol si aplica
-            if tournament.sport_type == "softball":
-                data.update(
-                    {
-                        "runs": team.runs,
-                        "runs_against": team.runs_against,
-                        "average": team.average,
-                    }
-                )
-            standings.append(data)
+        phase_slug = request.query_params.get("phase")
+        group_slug = request.query_params.get("group")
+        phase_id = request.query_params.get("phase_id")
+        group_id = request.query_params.get("group_id")
 
+        if phase_id:
+            phase = tournament.phases.filter(id=phase_id).first()
+        elif phase_slug:
+            phase = tournament.phases.filter(slug=phase_slug).first()
+
+        if group_id:
+            group = CompetitionGroup.objects.filter(
+                id=group_id, phase__tournament=tournament
+            ).first()
+        elif group_slug:
+            group = CompetitionGroup.objects.filter(
+                slug=group_slug, phase__tournament=tournament
+            ).first()
+
+        standings = StandingsService.compute(tournament, phase=phase, group=group)
         serializer = StandingsSerializer(standings, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], permission_classes=[AllowAny])
+    def format_templates(self, request):
+        """Plantillas de formato disponibles."""
+        sport_type = request.query_params.get("sport_type")
+        return Response(list_templates(sport_type))
+
+    @action(detail=True, methods=["get"], permission_classes=[AllowAny])
+    def structure(self, request, slug=None):
+        """Estructura completa del torneo (fases y grupos)."""
+        tournament = self.get_object()
+        phases = (
+            tournament.phases.prefetch_related(
+                Prefetch(
+                    "groups",
+                    queryset=CompetitionGroup.objects.prefetch_related(
+                        Prefetch(
+                            "memberships",
+                            queryset=GroupMembership.objects.select_related("team"),
+                        )
+                    ),
+                ),
+                Prefetch(
+                    "bracket__nodes",
+                    queryset=BracketNode.objects.select_related(
+                        "match",
+                        "match__home_team",
+                        "match__away_team",
+                    ).order_by("round", "position"),
+                ),
+            )
+            .all()
+            .order_by("order")
+        )
+        data = {
+            "structure_mode": tournament.structure_mode,
+            "format_template": tournament.format_template,
+            "phases": TournamentPhaseSerializer(phases, many=True).data,
+        }
+        return Response(data)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def assign_group_teams(self, request, slug=None):
+        """Asigna equipos a un grupo/cuadrangular."""
+        tournament = self.get_object()
+        serializer = AssignTeamsToGroupSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        group = CompetitionGroup.objects.filter(
+            id=serializer.validated_data["group_id"],
+            phase__tournament=tournament,
+        ).first()
+        if not group:
+            return Response({"error": "Grupo no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
+        team_ids = serializer.validated_data["team_ids"]
+        invalid = Team.objects.filter(id__in=team_ids).exclude(tournament=tournament)
+        if invalid.exists():
+            return Response(
+                {"error": "Todos los equipos deben pertenecer al torneo"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(team_ids) > group.max_teams:
+            return Response(
+                {"error": f"Máximo {group.max_teams} equipos en este grupo"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        assign_teams_to_group(group, team_ids)
+        return Response(CompetitionGroupSerializer(group).data)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def generate_fixture(self, request, slug=None):
+        """Genera fixture round-robin para una fase/grupo."""
+        tournament = self.get_object()
+        serializer = GenerateFixtureSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        phase = tournament.phases.filter(id=data["phase_id"]).first()
+        if not phase:
+            return Response({"error": "Fase no encontrada"}, status=status.HTTP_404_NOT_FOUND)
+
+        group = None
+        if data.get("group_id"):
+            group = phase.groups.filter(id=data["group_id"]).first()
+            if not group:
+                return Response({"error": "Grupo no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            if group or not phase.groups.exists():
+                matches = generate_round_robin_fixtures(
+                    tournament=tournament,
+                    phase=phase,
+                    group=group,
+                    posted_by=request.user,
+                    match_date=data["match_date"],
+                    venue=data.get("venue", ""),
+                )
+            else:
+                matches = []
+                for grp in phase.groups.all():
+                    matches.extend(
+                        generate_round_robin_fixtures(
+                            tournament=tournament,
+                            phase=phase,
+                            group=grp,
+                            posted_by=request.user,
+                            match_date=data["match_date"],
+                            venue=data.get("venue", ""),
+                        )
+                    )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "created_count": len(matches),
+                "matches": MatchListSerializer(matches, many=True).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def advance_phase(self, request, slug=None):
+        """Cierra una fase y genera partidos de la siguiente (eliminatoria)."""
+        tournament = self.get_object()
+        serializer = AdvancePhaseSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            result = run_advance_phase(
+                tournament=tournament,
+                from_phase_slug=data["from_phase"],
+                posted_by=request.user,
+                match_date=data.get("match_date"),
+                venue=data.get("venue", ""),
+            )
+        except SourceResolutionError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "from_phase": TournamentPhaseSerializer(result["from_phase"]).data,
+                "next_phase": TournamentPhaseSerializer(result["next_phase"]).data,
+                "matches_created": MatchListSerializer(
+                    result["matches_created"], many=True
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["get"], permission_classes=[AllowAny])
+    def bracket(self, request, slug=None):
+        """Bracket de una fase eliminatoria."""
+        tournament = self.get_object()
+        phase_slug = request.query_params.get("phase")
+        if not phase_slug:
+            return Response(
+                {"error": "Parámetro phase requerido"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        phase = tournament.phases.filter(slug=phase_slug, phase_type="knockout").first()
+        if not phase or not hasattr(phase, "bracket"):
+            return Response(
+                {"error": "Fase eliminatoria no encontrada"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        from .serializers import BracketSerializer
+
+        from_phase = (
+            tournament.phases.filter(order__lt=phase.order).order_by("-order").first()
+        )
+        return Response(
+            BracketSerializer(
+                phase.bracket,
+                context={"from_phase": from_phase},
+            ).data
+        )
 
     @action(detail=True, methods=["get"])
     def schedule(self, request, slug=None):
@@ -192,19 +392,24 @@ class TournamentViewSet(viewsets.ModelViewSet):
         tournament = self.get_object()
         matches = (
             Match.objects.filter(tournament=tournament)
-            .select_related("home_team", "away_team")
+            .select_related("home_team", "away_team", "phase", "group")
             .order_by("match_date")
         )
 
-        # Filtro por estado
         status_param = request.query_params.get("status")
         if status_param:
             matches = matches.filter(status=status_param)
 
-        # Filtro por equipo
         team_id = request.query_params.get("team")
         if team_id:
             matches = matches.filter(Q(home_team_id=team_id) | Q(away_team_id=team_id))
+
+        phase_param = request.query_params.get("phase")
+        group_param = request.query_params.get("group")
+        if phase_param:
+            matches = matches.filter(phase__slug=phase_param)
+        if group_param:
+            matches = matches.filter(group__slug=group_param)
 
         serializer = MatchListSerializer(matches, many=True)
         return Response(serializer.data)
@@ -606,6 +811,14 @@ class MatchViewSet(viewsets.ModelViewSet):
         if date_to:
             queryset = queryset.filter(match_date__date__lte=date_to)
 
+        # Filtro por fase/grupo
+        phase_param = self.request.query_params.get("phase")
+        group_param = self.request.query_params.get("group")
+        if phase_param:
+            queryset = queryset.filter(phase__slug=phase_param)
+        if group_param:
+            queryset = queryset.filter(group__slug=group_param)
+
         return queryset.order_by("match_date")
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
@@ -613,7 +826,6 @@ class MatchViewSet(viewsets.ModelViewSet):
         """Actualizar marcador del partido"""
         match = self.get_object()
 
-        # Verificar que el usuario pertenezca a la organización del torneo
         if (
             not request.user.is_superuser
             and request.user.organization != match.tournament.organization
@@ -623,77 +835,19 @@ class MatchViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        home_score = request.data.get("home_score")
-        away_score = request.data.get("away_score")
-
-        # Softbol stats
-        home_runs = request.data.get("home_runs")
-        away_runs = request.data.get("away_runs")
-
-        if home_score is not None:
-            match.home_score = home_score
-        if away_score is not None:
-            match.away_score = away_score
-        if home_runs is not None:
-            match.home_runs = home_runs
-        if away_runs is not None:
-            match.away_runs = away_runs
-
-        match.status = "finished"
-        match.finished_at = timezone.now()
-        match.save()
-
-        # Actualizar estadísticas de equipos
-        self._update_team_stats(match)
+        try:
+            score_data = MatchResultService.normalize_scores_from_request(
+                match, request.data
+            )
+            match.status = "finished"
+            match.finished_at = timezone.now()
+            match.save(update_fields=["status", "finished_at"])
+            MatchResultService.finalize_match(match, score_data)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = MatchDetailSerializer(match)
         return Response(serializer.data)
-
-    def _update_team_stats(self, match):
-        """Actualizar estadísticas de equipos después de un partido"""
-        home = match.home_team
-        away = match.away_team
-
-        # Actualizar partidos jugados
-        home.played += 1
-        away.played += 1
-
-        # Determinar resultado
-        if match.home_score > match.away_score:
-            home.won += 1
-            home.points += 3
-            away.lost += 1
-        elif match.away_score > match.home_score:
-            away.won += 1
-            away.points += 3
-            home.lost += 1
-        else:
-            home.drawn += 1
-            away.drawn += 1
-            home.points += 1
-            away.points += 1
-
-        # Goles/Carreras
-        home.goals_for += match.home_score or 0
-        home.goals_against += match.away_score or 0
-        away.goals_for += match.away_score or 0
-        away.goals_against += match.home_score or 0
-
-        # Softbol stats
-        if match.tournament.sport_type == "softball":
-            home.runs += match.home_runs or 0
-            home.runs_against += match.away_runs or 0
-            away.runs += match.away_runs or 0
-            away.runs_against += match.home_runs or 0
-
-            # Calcular average
-            if home.runs_against > 0:
-                home.average = home.runs / home.runs_against
-            if away.runs_against > 0:
-                away.average = away.runs / away.runs_against
-
-        home.save()
-        away.save()
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def add_event(self, request, pk=None):
@@ -715,12 +869,23 @@ class MatchViewSet(viewsets.ModelViewSet):
             return
 
         match = event.match
-        if event.team == match.home_team:
-            match.home_score = (match.home_score or 0) + 1
-        elif event.team == match.away_team:
-            match.away_score = (match.away_score or 0) + 1
+        config = get_scoring_config(match.tournament)
+        home_field, away_field = config["primary_fields"]
 
-        match.save(update_fields=["home_score", "away_score"])
+        if event.team == match.home_team:
+            current = getattr(match, home_field) or 0
+            setattr(match, home_field, current + 1)
+        elif event.team == match.away_team:
+            current = getattr(match, away_field) or 0
+            setattr(match, away_field, current + 1)
+
+        if home_field == "home_runs":
+            match.home_score = match.home_runs
+            match.away_score = match.away_runs
+
+        match.save(
+            update_fields=["home_score", "away_score", "home_runs", "away_runs"]
+        )
 
     def _update_player_stats(self, event):
         """Actualizar estadísticas del jugador"""
@@ -1248,6 +1413,18 @@ class AdvertisementBannerViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        from django.conf import settings
+        from rest_framework.exceptions import ValidationError
+
+        if not settings.TOURNAMENT_OWNER_BANNERS_ENABLED:
+            raise ValidationError(
+                {
+                    "detail": (
+                        "La carga directa de banners por el organizador está desactivada. "
+                        "Compra un patrocinio exclusivo del torneo con créditos."
+                    )
+                }
+            )
         serializer.save(posted_by=self.request.user)
 
     def perform_update(self, serializer):
@@ -1263,9 +1440,22 @@ class AdvertisementBannerViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=False, methods=["get"], permission_classes=[AllowAny])
+    def config(self, request):
+        from django.conf import settings
+
+        return Response(
+            {
+                "owner_banners_enabled": settings.TOURNAMENT_OWNER_BANNERS_ENABLED,
+            }
+        )
+
+    @action(detail=False, methods=["get"], permission_classes=[AllowAny])
     def by_position(self, request):
+        from advertising.services import expire_stale_sponsorships, get_active_sponsorship
+        from django.conf import settings
+
         position = request.query_params.get("position")
-        tournament_id = request.query_params.get("tournament")  # ← NUEVO
+        tournament_id = request.query_params.get("tournament")
 
         if not position:
             return Response(
@@ -1280,19 +1470,49 @@ class AdvertisementBannerViewSet(viewsets.ModelViewSet):
             start_date__lte=today,
         ).filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
 
-        # Filtrar por torneo si se proporciona
         if tournament_id:
-            banners = banners.filter(tournament_id=tournament_id)
+            expire_stale_sponsorships()
+            sponsorship = get_active_sponsorship(tournament_id)
+            if sponsorship:
+                banners = banners.filter(
+                    sponsorship_id=sponsorship.id,
+                    tournament_id=tournament_id,
+                )
+            elif settings.TOURNAMENT_OWNER_BANNERS_ENABLED:
+                banners = banners.filter(
+                    tournament_id=tournament_id,
+                    sponsorship__isnull=True,
+                )
+            else:
+                banners = banners.none()
 
-        banners = banners.order_by("display_order")
+        if not settings.TOURNAMENT_OWNER_BANNERS_ENABLED:
+            banners = banners.exclude(
+                sponsorship__isnull=True,
+                campaign__isnull=True,
+            )
 
-        # Incrementar impresiones
-        banner_ids = list(banners.values_list("id", flat=True))
-        AdvertisementBanner.objects.filter(id__in=banner_ids).update(
-            impressions=F("impressions") + 1
-        )
+        object_id = request.query_params.get("object_id")
+        viewer_hash = request.query_params.get("viewer_hash")
 
-        serializer = AdvertisementBannerSerializer(banners, many=True)
+        if object_id:
+            banners = banners.filter(campaign__object_id=object_id)
+
+        banners = banners.order_by("display_order")[:1]
+
+        banner_list = list(banners)
+        if banner_list:
+            from advertising.services import record_campaign_impression
+
+            banner = banner_list[0]
+            if banner.campaign_id and viewer_hash:
+                record_campaign_impression(banner.campaign, viewer_hash[:64])
+            else:
+                AdvertisementBanner.objects.filter(id=banner.id).update(
+                    impressions=F("impressions") + 1
+                )
+
+        serializer = AdvertisementBannerSerializer(banner_list, many=True)
         return Response(serializer.data)
 
     @action(detail=False, methods=["get"], permission_classes=[AllowAny])
@@ -1310,6 +1530,14 @@ class AdvertisementBannerViewSet(viewsets.ModelViewSet):
             .filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
             .order_by("position", "display_order")
         )
+
+        from django.conf import settings
+
+        if not settings.TOURNAMENT_OWNER_BANNERS_ENABLED:
+            banners = banners.exclude(
+                sponsorship__isnull=True,
+                campaign__isnull=True,
+            )
 
         serializer = AdvertisementBannerSerializer(banners, many=True)
         return Response(serializer.data)

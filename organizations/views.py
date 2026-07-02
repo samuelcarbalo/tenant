@@ -95,7 +95,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         stats = {
             'total_users': organization.users.filter(is_active=True).count(),
             'active_today': organization.users.filter(last_login__date='today').count(),
-            'profiles_completed': organization.users.filter(porfile__isnull=False).count()
+            'profiles_completed': organization.users.filter(profile__isnull=False).count()
         }
 
         return Response(stats)

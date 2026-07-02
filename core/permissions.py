@@ -38,16 +38,24 @@ class IsCoachOfTeam(permissions.BasePermission):
 class IsOrganizationMember(permissions.BasePermission):
     """
     Permiso que verifica si el usuario pertenece a la organización
-    especificada en el request (header o body).
+    especificada en el request (cabecera X-Tenant, X-Organization-ID, o del usuario).
     """
 
     def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
         # Superusers tienen acceso a todo
         if request.user.is_superuser:
             return True
 
-        # Obtener organization_id del header o del usuario
+        # Obtener slug o ID de las cabeceras
+        org_slug = request.headers.get("X-Tenant")
         org_id = request.headers.get("X-Organization-ID")
+
+        if org_slug:
+            return request.user.organization and request.user.organization.slug == org_slug
+
         if not org_id:
             org_id = getattr(request.user, "organization_id", None)
 
@@ -63,7 +71,10 @@ class IsOrganizationAdmin(permissions.BasePermission):
     """
 
     def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
         if request.user.is_superuser:
             return True
 
-        return request.user.is_staff and request.user.role == "admin"
+        return request.user.is_staff and getattr(request.user, "role", None) == "admin"

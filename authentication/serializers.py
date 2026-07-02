@@ -60,6 +60,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if user.organization:
             token["org_id"] = str(user.organization_id)
 
+        if user.is_superuser:
+            token["is_superuser"] = True
+
         return token
 
 
@@ -176,31 +179,29 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 class UserLoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
-    organization_slug = serializers.CharField(required=True)
+    organization_slug = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, data):
+        from .auth_utils import resolve_login_user
+
         email = data.get("email")
         password = data.get("password")
-        org_slug = data.get("organization_slug")
+        org_slug = (data.get("organization_slug") or "").strip()
 
-        print("========== VALIDATE ==========")
-        print(f"Email: {email}, Org: {org_slug}")
+        user = resolve_login_user(email, password, org_slug if org_slug else None)
 
-        try:
-            user = User.objects.select_related("organization").get(
-                email=email, organization__slug=org_slug
+        if not user:
+            if org_slug:
+                raise serializers.ValidationError({"email": "Credenciales inválidas."})
+            raise serializers.ValidationError(
+                {
+                    "organization_slug": (
+                        "Debe indicar el slug de la organización. "
+                        "Solo los superusuarios de plataforma pueden iniciar sesión sin organización."
+                    )
+                }
             )
-            print(f"Usuario: {user.username}")
-        except User.DoesNotExist:
-            print("No existe")
-            raise serializers.ValidationError({"email": "Credenciales inválidas."})
 
-        # Verificar password - FORMA CORRECTA
-        if not user.check_password(password):
-            print("Password mal")
-            raise serializers.ValidationError({"email": "Credenciales inválidas."})
-
-        print("Todo OK")
         data["user"] = user
         return data
 
@@ -228,6 +229,7 @@ class UserSerializer(serializers.ModelSerializer):
             "organization",
             "organization_name",
             "is_active",
+            "is_superuser",
             "email_verified",
             "date_joined",
             "last_login",
@@ -235,7 +237,7 @@ class UserSerializer(serializers.ModelSerializer):
             "credits",
             "user_type",
         ]
-        read_only_fields = ["id", "email", "organization", "date_joined"]
+        read_only_fields = ["id", "email", "organization", "date_joined", "is_superuser"]
 
 
 class PasswordChangeSerializer(serializers.Serializer):  # Cambia a Serializer
