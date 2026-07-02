@@ -1,4 +1,5 @@
 from collections import defaultdict
+from functools import cmp_to_key
 
 from django.db.models import Q
 
@@ -125,28 +126,50 @@ class StandingsService:
         return points_a
 
     @staticmethod
-    def _sort_key(row, config, h2h_matches):
+    def _sign(value):
+        return (value > 0) - (value < 0)
+
+    @staticmethod
+    def _compare_rows(row_a, row_b, config, matches):
+        """Comparador pairwise que respeta el orden de desempates del deporte.
+
+        Devuelve <0 si A va antes que B. El head-to-head se resuelve
+        directamente entre los dos equipos comparados.
+        """
         tiebreakers = config.get("tiebreakers", ["points", "name"])
-        team = row["team"]
-        keys = []
+        team_a, team_b = row_a["team"], row_b["team"]
+
         for tb in tiebreakers:
+            diff = 0
             if tb == "points":
-                keys.append(-row["points"])
+                diff = row_b["points"] - row_a["points"]
             elif tb == "wins":
-                keys.append(-row["won"])
+                diff = row_b["won"] - row_a["won"]
             elif tb == "goal_difference":
-                keys.append(-row["goal_difference"])
+                diff = row_b["goal_difference"] - row_a["goal_difference"]
             elif tb == "goals_for":
-                keys.append(-row["goals_for"])
+                diff = row_b["goals_for"] - row_a["goals_for"]
             elif tb == "runs_for":
-                keys.append(-row["runs"])
+                diff = row_b["runs"] - row_a["runs"]
             elif tb == "average":
-                keys.append(-row["average"])
+                diff = StandingsService._sign(row_b["average"] - row_a["average"])
             elif tb == "head_to_head":
-                keys.append(0)
+                pa = StandingsService._head_to_head_points(
+                    team_a, team_b, matches, config
+                )
+                pb = StandingsService._head_to_head_points(
+                    team_b, team_a, matches, config
+                )
+                diff = pb - pa
             elif tb == "name":
-                keys.append(team.name.lower())
-        return tuple(keys)
+                if team_a.name.lower() < team_b.name.lower():
+                    diff = -1
+                elif team_a.name.lower() > team_b.name.lower():
+                    diff = 1
+            sign = StandingsService._sign(diff)
+            if sign != 0:
+                return sign
+        return 0
 
     @staticmethod
     def compute(tournament, phase=None, group=None):
@@ -208,7 +231,9 @@ class StandingsService:
 
         standings_list = list(rows.values())
         standings_list.sort(
-            key=lambda r: StandingsService._sort_key(r, config, matches)
+            key=cmp_to_key(
+                lambda a, b: StandingsService._compare_rows(a, b, config, matches)
+            )
         )
 
         result = []

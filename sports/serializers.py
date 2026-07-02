@@ -42,6 +42,8 @@ class TournamentCreateSerializer(serializers.ModelSerializer):
             "scoring_config",
             "rules_url",
             "lineup_size",
+            "regulation_innings",
+            "mercy_rule_enabled",
         ]
 
     def validate(self, data):
@@ -149,10 +151,12 @@ class TeamListSerializer(serializers.ModelSerializer):
         ]
 
     def get_position(self, obj):
-        """Calcular posición en la tabla"""
-        teams = Team.objects.filter(tournament=obj.tournament).order_by(
-            "-points", "-goals_for", "name"
-        )
+        """Calcular posición en la tabla (orden según deporte)."""
+        if obj.tournament.sport_type == "softball":
+            order = ("-points", "-won", "-average", "-runs", "name")
+        else:
+            order = ("-points", "-goals_for", "name")
+        teams = Team.objects.filter(tournament=obj.tournament).order_by(*order)
         for idx, team in enumerate(teams, 1):
             if team.id == obj.id:
                 return idx
@@ -239,6 +243,15 @@ class PlayerListSerializer(serializers.ModelSerializer):
             "birth_date",
             "tournament",
             "tournament_slug",
+            # Bateo softbol
+            "at_bats",
+            "hits",
+            "runs_scored",
+            "rbis",
+            "batting_average",
+            "home_runs",
+            "walks",
+            "strikes_out",
         ]
 
 
@@ -300,12 +313,16 @@ class MatchEventSerializer(serializers.ModelSerializer):
             "event_type",
             "event_type_display",
             "minute",
+            "inning_number",
+            "inning_half",
+            "rbi",
             "player",
             "player_name",
             "team",
             "team_name",
             "description",
         ]
+        extra_kwargs = {"minute": {"required": False, "allow_null": True}}
 
 
 class MatchListSerializer(serializers.ModelSerializer):
@@ -360,10 +377,22 @@ class MatchDetailSerializer(serializers.ModelSerializer):
     # Logos
     home_team_logo = serializers.CharField(source="home_team.logo", read_only=True)
     away_team_logo = serializers.CharField(source="away_team.logo", read_only=True)
+    sport_type = serializers.CharField(source="tournament.sport_type", read_only=True)
+    regulation_innings = serializers.IntegerField(
+        source="tournament.regulation_innings", read_only=True
+    )
+    line_score = serializers.SerializerMethodField()
 
     class Meta:
         model = Match
         fields = "__all__"
+
+    def get_line_score(self, obj):
+        if obj.tournament.sport_type != "softball":
+            return None
+        from sports.services.innings import build_line_score
+
+        return build_line_score(obj)
 
 
 class GroupMembershipSerializer(serializers.ModelSerializer):

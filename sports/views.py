@@ -18,6 +18,7 @@ from .models import (
     MatchEvent,
     MatchLineup,
     MatchPeriod,
+    MatchInning,
     AdvertisementBanner,
 )
 from .serializers import (
@@ -506,11 +507,19 @@ class TournamentViewSet(viewsets.ModelViewSet):
         top_red_cards = players.filter(red_cards__gt=0).order_by("-red_cards")[:10]
 
         # Stats de softbol
-        top_strikes = None
+        top_average = None
+        top_hits = None
         top_home_runs = None
+        top_rbis = None
+        top_runs = None
         if tournament.sport_type == "softball":
-            top_strikes = players.filter(strikes__gt=0).order_by("-strikes")[:10]
+            top_average = players.filter(at_bats__gte=3).order_by(
+                "-batting_average", "-hits"
+            )[:10]
+            top_hits = players.filter(hits__gt=0).order_by("-hits")[:10]
             top_home_runs = players.filter(home_runs__gt=0).order_by("-home_runs")[:10]
+            top_rbis = players.filter(rbis__gt=0).order_by("-rbis")[:10]
+            top_runs = players.filter(runs_scored__gt=0).order_by("-runs_scored")[:10]
 
         def serialize_players(queryset, stat_field):
             return [
@@ -545,8 +554,11 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if tournament.sport_type == "softball":
             data.update(
                 {
-                    "top_strikes": serialize_players(top_strikes, "strikes"),
+                    "top_average": serialize_players(top_average, "batting_average"),
+                    "top_hits": serialize_players(top_hits, "hits"),
                     "top_home_runs": serialize_players(top_home_runs, "home_runs"),
+                    "top_rbis": serialize_players(top_rbis, "rbis"),
+                    "top_runs": serialize_players(top_runs, "runs_scored"),
                 }
             )
 
@@ -865,11 +877,17 @@ class MatchViewSet(viewsets.ModelViewSet):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def _update_score_from_event(self, event):
-        """Actualizar marcador automáticamente según el evento"""
+        """Actualizar marcador automáticamente según el evento (solo fútbol).
+
+        En softbol el marcador proviene del line score por entradas
+        (record_inning); los eventos son solo para el box score.
+        """
+        match = event.match
+        if match.tournament.sport_type == "softball":
+            return
         if event.event_type != "goal":
             return
 
-        match = event.match
         config = get_scoring_config(match.tournament)
         home_field, away_field = config["primary_fields"]
 
@@ -880,22 +898,43 @@ class MatchViewSet(viewsets.ModelViewSet):
             current = getattr(match, away_field) or 0
             setattr(match, away_field, current + 1)
 
-        if home_field == "home_runs":
-            match.home_score = match.home_runs
-            match.away_score = match.away_runs
-
         match.save(
             update_fields=["home_score", "away_score", "home_runs", "away_runs"]
         )
 
     def _update_player_stats(self, event):
-        """Actualizar estadísticas del jugador"""
+        """Actualizar estadísticas del jugador según el deporte."""
         player = event.player
+        sport = event.match.tournament.sport_type
 
+        if sport == "softball":
+            et = event.event_type
+            if et in ("single", "double", "triple", "home_run"):
+                player.hits += 1
+                player.at_bats += 1
+                if et == "home_run":
+                    player.home_runs += 1
+            elif et == "strikeout":
+                player.strikes_out += 1
+                player.at_bats += 1
+            elif et == "out":
+                player.at_bats += 1
+            elif et == "walk":
+                player.walks += 1
+            elif et == "run":
+                player.runs_scored += 1
+            elif et == "rbi":
+                player.rbis += max(1, event.rbi or 0)
+
+            player.batting_average = (
+                player.hits / player.at_bats if player.at_bats > 0 else 0.0
+            )
+            player.save()
+            return
+
+        # Fútbol y otros
         if event.event_type == "goal":
             player.goals += 1
-            if event.match.tournament.sport_type == "softball":
-                player.strikes += 1
         elif event.event_type == "yellow_card":
             player.yellow_cards += 1
         elif event.event_type == "red_card":
@@ -922,6 +961,79 @@ class MatchViewSet(viewsets.ModelViewSet):
     def finish_match(self, request, pk=None):
         """Finalizar partido"""
         return self.update_score(request, pk)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def record_inning(self, request, pk=None):
+        """Registra/actualiza una media entrada (softbol) y evalúa fin de juego.
+
+        Body: {number:int, half:"top"|"bottom", runs?:int, hits?:int,
+               errors?:int, is_complete?:bool}
+        """
+        match = self.get_object()
+
+        if (
+            not request.user.is_superuser
+            and request.user.organization != match.tournament.organization
+        ):
+            return Response(
+                {"error": "No tienes permiso para editar este partido"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if match.tournament.sport_type != "softball":
+            return Response(
+                {"error": "El marcador por entradas solo aplica a softbol."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            number = int(request.data.get("number"))
+            half = request.data.get("half")
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "number y half son obligatorios."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if half not in ("top", "bottom") or number < 1:
+            return Response(
+                {"error": "Datos de entrada inválidos."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from sports.services.innings import upsert_inning, check_game_over
+
+        if match.status == "scheduled":
+            match.status = "live"
+            if not match.started_at:
+                match.started_at = timezone.now()
+            match.save(update_fields=["status", "started_at"])
+
+        upsert_inning(
+            match,
+            number,
+            half,
+            runs=request.data.get("runs"),
+            hits=request.data.get("hits"),
+            errors=request.data.get("errors"),
+            is_complete=request.data.get("is_complete"),
+        )
+
+        game = check_game_over(match)
+        auto_finished = False
+        if game["over"] and request.data.get("finish", True):
+            try:
+                MatchResultService.finalize_match(
+                    match, {"home_runs": match.home_runs, "away_runs": match.away_runs}
+                )
+                auto_finished = True
+            except ValueError:
+                auto_finished = False
+
+        match.refresh_from_db()
+        data = MatchDetailSerializer(match).data
+        data["game_over"] = game
+        data["auto_finished"] = auto_finished
+        return Response(data)
 
     def perform_create(self, serializer):
         """Asignar posted_by desde el usuario autenticado"""

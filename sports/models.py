@@ -86,6 +86,14 @@ class Tournament(TimeStampedModel):
         default=9,
         help_text="Titulares en campo: 9 estándar, 10 con bateador designado (softbol).",
     )
+    regulation_innings = models.PositiveSmallIntegerField(
+        default=7,
+        help_text="Entradas reglamentarias (softbol: 7 estándar).",
+    )
+    mercy_rule_enabled = models.BooleanField(
+        default=True,
+        help_text="Aplica knockout por diferencia de carreras (softbol).",
+    )
 
     class Meta:
         db_table = "tournaments"
@@ -363,6 +371,13 @@ class Player(TimeStampedModel):
     strikes_out_against = models.PositiveIntegerField(default=0)
     average_strikes_out = models.FloatField(default=0.0)
 
+    # Bateo softbol (limpio)
+    at_bats = models.PositiveIntegerField(default=0)
+    hits = models.PositiveIntegerField(default=0)
+    runs_scored = models.PositiveIntegerField(default=0)
+    rbis = models.PositiveIntegerField(default=0)
+    batting_average = models.FloatField(default=0.0)
+
     impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
 
     class Meta:
@@ -516,10 +531,28 @@ class MatchEvent(TimeStampedModel):
         ("penalty_missed", "Penal Fallado"),
         ("assist", "Asistencia"),
         ("expelled", "Expulsado"),
+        # Softbol / béisbol
+        ("single", "Sencillo"),
+        ("double", "Doble"),
+        ("triple", "Triple"),
+        ("home_run", "Jonrón"),
+        ("walk", "Base por bolas"),
+        ("strikeout", "Ponche"),
+        ("run", "Carrera anotada"),
+        ("rbi", "Carrera impulsada"),
+        ("error", "Error"),
+        ("out", "Out"),
     ]
     event_type = models.CharField(max_length=20, choices=EVENT_TYPES)
 
-    minute = models.PositiveIntegerField()  # Minuto del partido
+    minute = models.PositiveIntegerField(null=True, blank=True)  # Minuto (fútbol)
+    # Contexto softbol
+    inning_number = models.PositiveSmallIntegerField(null=True, blank=True)
+    inning_half = models.CharField(
+        max_length=6, blank=True,
+        choices=[("top", "Alta"), ("bottom", "Baja")],
+    )
+    rbi = models.PositiveSmallIntegerField(default=0)
     description = models.TextField(blank=True)
 
     impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
@@ -641,6 +674,43 @@ class MatchPeriod(TimeStampedModel):
     @property
     def elapsed_minutes(self):
         return self.elapsed_seconds // 60
+
+
+class MatchInning(TimeStampedModel):
+    """
+    Media entrada de un partido de softbol/béisbol (line score).
+    Convención: en la 'alta' (top) batea el visitante; en la 'baja' (bottom) el local.
+    """
+
+    HALF_CHOICES = [
+        ("top", "Alta"),
+        ("bottom", "Baja"),
+    ]
+
+    match = models.ForeignKey(
+        Match, on_delete=models.CASCADE, related_name="innings"
+    )
+    number = models.PositiveSmallIntegerField()  # 1, 2, 3...
+    half = models.CharField(max_length=6, choices=HALF_CHOICES)
+
+    runs = models.PositiveIntegerField(default=0)
+    hits = models.PositiveIntegerField(default=0)
+    errors = models.PositiveIntegerField(default=0)
+
+    is_complete = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "match_innings"
+        unique_together = ["match", "number", "half"]
+        # 'top' > 'bottom' alfabéticamente: -half deja la alta antes que la baja.
+        ordering = ["number", "-half"]
+
+    def __str__(self):
+        return f"{self.match} - E{self.number}{'▲' if self.half == 'top' else '▼'}"
+
+    @property
+    def batting_team(self):
+        return self.match.away_team if self.half == "top" else self.match.home_team
 
 
 class AdvertisementBanner(TimeStampedModel):
