@@ -1,7 +1,6 @@
-# Secretos — nunca commitear
+# Secretos — nunca commitear (incluye plantillas .env.example)
 .env
 .env.*
-!.env.example
 
 # Python
 venv/
