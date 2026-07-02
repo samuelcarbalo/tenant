@@ -47,9 +47,12 @@ mercadopago>=2.2.0              # Checkout Pro — Mercado Pago
 # --- Servidor WSGI/HTTP (producción) ---
 gunicorn>=21.2.0
 
+# --- Static files (producción) ---
+whitenoise>=6.6.0              # Servir static files sin nginx
+
 # =============================================================================
 # Opcionales (no requeridos hoy, útiles en prod)
 # =============================================================================
-# django-redis>=5.4.0           # Cache backend con Redis (si se configura CACHES)
+# django-redis>=5.4.0           # (No necesario: Django 4.2 trae RedisCache nativo)
 # Pillow>=10.0.0                # Procesamiento de imágenes (si se validan uploads con PIL)
-# whitenoise>=6.6.0             # Servir static files en producción
+# sentry-sdk>=1.40.0            # Monitoreo de errores (se activa si SENTRY_DSN está seteado)

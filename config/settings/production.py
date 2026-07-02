@@ -1,0 +1,144 @@
+"""Configuración de producción.
+
+Todo lo sensible/variable se lee de variables de entorno (tenant/.env o el
+entorno del servidor). Ver .env.example para la lista completa.
+
+Ejecutar con:  DJANGO_SETTINGS_MODULE=config.settings.production
+"""
+import os
+
+from .base import *  # noqa: F401,F403
+
+
+def _env_list(name, default=""):
+    raw = os.getenv(name, default)
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _env_bool(name, default=False):
+    return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+
+
+# ── Núcleo ──────────────────────────────────────────────────────────────────
+DEBUG = False
+
+if not SECRET_KEY:  # noqa: F405 (viene de base)
+    raise RuntimeError("SECRET_KEY es obligatorio en producción (define la variable de entorno).")
+
+ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS")
+if not ALLOWED_HOSTS:
+    raise RuntimeError("ALLOWED_HOSTS es obligatorio en producción (lista separada por comas).")
+
+# ── CORS / CSRF ─────────────────────────────────────────────────────────────
+CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS")
+CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS") or CORS_ALLOWED_ORIGINS
+
+# ── Base de datos (PostgreSQL) ──────────────────────────────────────────────
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("POSTGRES_DB", ""),
+        "USER": os.getenv("POSTGRES_USER", ""),
+        "PASSWORD": os.getenv("POSTGRES_PASSWORD", ""),
+        "HOST": os.getenv("POSTGRES_HOST", "127.0.0.1"),
+        "PORT": os.getenv("POSTGRES_PORT", "5432"),
+        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
+    }
+}
+
+# ── Cache + Channel layer (Redis) ───────────────────────────────────────────
+REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1")
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL,
+    }
+}
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {"hosts": [REDIS_URL]},
+    }
+}
+
+# El throttling usa la cache: en prod comparte contadores vía Redis.
+
+# ── Archivos estáticos (WhiteNoise) ─────────────────────────────────────────
+STATIC_ROOT = BASE_DIR / "staticfiles"  # noqa: F405
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
+# Insertar WhiteNoise justo después de SecurityMiddleware
+_wn = "whitenoise.middleware.WhiteNoiseMiddleware"
+if _wn not in MIDDLEWARE:  # noqa: F405
+    try:
+        _idx = MIDDLEWARE.index("django.middleware.security.SecurityMiddleware")  # noqa: F405
+        MIDDLEWARE.insert(_idx + 1, _wn)  # noqa: F405
+    except ValueError:
+        MIDDLEWARE.insert(0, _wn)  # noqa: F405
+
+# ── Email (SMTP real) ───────────────────────────────────────────────────────
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend"
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = _env_bool("EMAIL_USE_TLS", True)
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@localhost")
+
+# ── Seguridad HTTPS ─────────────────────────────────────────────────────────
+# Detrás de un proxy/balanceador que hace TLS (nginx, traefik, load balancer):
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT = _env_bool("SECURE_SSL_REDIRECT", True)
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
+
+# ── Logging (a stdout, apto para contenedores) ──────────────────────────────
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {name} {message}",
+            "style": "{",
+        }
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "verbose"},
+    },
+    "root": {"handlers": ["console"], "level": os.getenv("LOG_LEVEL", "INFO")},
+    "loggers": {
+        "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "payments": {"handlers": ["console"], "level": "INFO", "propagate": False},
+    },
+}
+
+# ── Monitoreo de errores (Sentry, opcional) ─────────────────────────────────
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+if SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.django import DjangoIntegration
+
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            integrations=[DjangoIntegration()],
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_RATE", "0.1")),
+            send_default_pii=False,
+            environment=os.getenv("SENTRY_ENV", "production"),
+        )
+    except ImportError:
+        pass
