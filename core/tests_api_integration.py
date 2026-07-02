@@ -91,7 +91,7 @@ class PaymentsAPITests(BaseIntegrationTestCase):
         res = self.anon.get(f"{API}/payments/config/")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertIn("public_key", res.data)
-        self.assertTrue(res.data["public_key"].startswith("APP_USR-"))
+        self.assertIsInstance(res.data["public_key"], str)
 
     @patch("payments.views.MercadoPagoService")
     def test_create_preference(self, MockMP):

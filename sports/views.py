@@ -37,6 +37,7 @@ from .serializers import (
     TournamentCreateSerializer,
     MatchLineupSerializer,
     MatchLineupCreateSerializer,
+    MatchLineupBulkCreateSerializer,
     AdvertisementBannerCreateUpdateSerializer,
     AdvertisementBannerSerializer,
     TournamentStructureSerializer,
@@ -977,22 +978,17 @@ class MatchViewSet(viewsets.ModelViewSet):
         """
         Crear la alineación completa de UN equipo de una vez
         POST /api/v1/sports/matches/{id}/set_lineup/
-
-        Body:
-        {
-            "team": 3,
-            "players": [
-                {"player": 42, "is_starter": true, "position": "goalkeeper", "jersey_number": 1},
-                {"player": 17, "is_starter": true, "position": "defender", "jersey_number": 4},
-                {"player": 23, "is_starter": false, "position": "forward", "jersey_number": 9}
-            ]
-        }
         """
         match = self.get_object()
         team_id = request.data.get("team")
         players_data = request.data.get("players", [])
 
-        # Validar que el equipo pertenece al partido
+        if match.status not in ("scheduled",):
+            return Response(
+                {"error": "Solo puedes definir alineación antes de iniciar el partido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         if not Team.objects.filter(
             id=team_id, id__in=[match.home_team_id, match.away_team_id]
         ).exists():
@@ -1001,17 +997,33 @@ class MatchViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        bulk_serializer = MatchLineupBulkCreateSerializer(
+            data={"team": team_id, "players": players_data},
+            context={"match": match, "request": request},
+        )
+        if not bulk_serializer.is_valid():
+            return Response(
+                {"success": False, "error": bulk_serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        MatchLineup.objects.filter(match=match, team_id=team_id).delete()
+
         created = []
         errors = []
-
         for player_data in players_data:
             data = {"match": match.id, "team": team_id, **player_data}
             serializer = MatchLineupCreateSerializer(data=data)
             if serializer.is_valid():
                 lineup = serializer.save(posted_by=request.user)
-                # ← AGREGAR ESTO: los titulares empiezan en cancha
                 if lineup.is_starter:
-                    lineup.is_on_field = True
+                    if lineup.position == "designated_hitter":
+                        lineup.is_on_field = False
+                    else:
+                        lineup.is_on_field = True
+                    lineup.save(update_fields=["is_on_field"])
+                else:
+                    lineup.is_on_field = False
                     lineup.save(update_fields=["is_on_field"])
                 created.append(MatchLineupSerializer(lineup).data)
             else:
@@ -1019,11 +1031,14 @@ class MatchViewSet(viewsets.ModelViewSet):
                     {"player": player_data.get("player"), "errors": serializer.errors}
                 )
 
+        if errors:
+            return Response(
+                {"success": False, "created": created, "errors": errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         return Response(
-            {
-                "created": created,
-                "errors": errors,
-            },
+            {"success": True, "created": created, "errors": []},
             status=status.HTTP_201_CREATED,
         )
 

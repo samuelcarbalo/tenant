@@ -13,7 +13,7 @@ from sports.services.structure import (
     generate_round_robin_fixtures,
 )
 from sports.services.advancement import advance_phase, propagate_bracket_after_match
-from sports.scoring import MatchResultService
+from sports.scoring import MatchResultService, StandingsService
 
 
 class Phase3IntegrationTests(TestCase):
@@ -104,6 +104,27 @@ class Phase3IntegrationTests(TestCase):
         self.assertEqual(final.match_type, "knockout")
         names = {final.home_team.name, final.away_team.name}
         self.assertEqual(names, {"Alpha", "Beta"})
+
+    def test_knockout_standings_exclude_eliminated_teams(self):
+        self._finish_quadrangular_with_clear_ranking()
+        advance_phase(self.tournament, "cuadrangular", self.user)
+
+        final_phase = self.tournament.phases.get(slug="final")
+        standings = StandingsService.compute(self.tournament, phase=final_phase)
+        self.assertEqual(len(standings), 2)
+        names = {row["team"].name for row in standings}
+        self.assertEqual(names, {"Alpha", "Beta"})
+
+        res = self.client.get(
+            f"/api/v1/sports/tournaments/{self.tournament.slug}/standings/",
+            {"phase": "final"},
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.json()), 2)
+        api_names = {row["team"]["name"] for row in res.json()}
+        self.assertEqual(api_names, {"Alpha", "Beta"})
+        self.assertNotIn("Gamma", api_names)
+        self.assertNotIn("Delta", api_names)
 
     def test_advance_phase_api(self):
         self._finish_quadrangular_with_clear_ranking()

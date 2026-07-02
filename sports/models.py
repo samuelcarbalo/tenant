@@ -81,6 +81,11 @@ class Tournament(TimeStampedModel):
     )
     format_template = models.CharField(max_length=50, blank=True, default="")
     scoring_config = models.JSONField(default=dict, blank=True)
+    rules_url = models.URLField(max_length=500, blank=True, verbose_name="Reglamento (URL)")
+    lineup_size = models.PositiveSmallIntegerField(
+        default=9,
+        help_text="Titulares en campo: 9 estándar, 10 con bateador designado (softbol).",
+    )
 
     class Meta:
         db_table = "tournaments"
@@ -561,13 +566,14 @@ class MatchLineup(TimeStampedModel):
     # Si entró como sustituto, en qué minuto
     substitution_minute = models.PositiveIntegerField(null=True, blank=True)
     entry_number = models.PositiveIntegerField(default=1)
+    batting_order = models.PositiveSmallIntegerField(null=True, blank=True)
 
     impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
 
     class Meta:
         db_table = "match_lineups"
         unique_together = ["match", "player", "entry_number"]
-        ordering = ["-is_starter", "jersey_number"]
+        ordering = ["batting_order", "-is_starter", "jersey_number"]
 
     def __str__(self):
         role = "Titular" if self.is_starter else "Suplente"

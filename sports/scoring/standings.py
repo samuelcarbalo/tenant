@@ -29,13 +29,54 @@ class StandingsService:
         }
 
     @staticmethod
+    def _team_ids_from_phase_matches(tournament, phase):
+        ids = set()
+        for home_id, away_id in Match.objects.filter(
+            tournament=tournament, phase=phase
+        ).values_list("home_team_id", "away_team_id"):
+            if home_id:
+                ids.add(home_id)
+            if away_id:
+                ids.add(away_id)
+        return ids
+
+    @staticmethod
+    def _team_ids_from_bracket(phase, tournament):
+        """Equipos esperados en eliminatoria según bracket (si aún no hay partidos)."""
+        from sports.services.advancement import resolve_team_source
+
+        ids = set()
+        if not hasattr(phase, "bracket"):
+            return ids
+        prior = (
+            tournament.phases.filter(order__lt=phase.order, status="finished")
+            .order_by("-order")
+            .first()
+        )
+        for node in phase.bracket.nodes.all():
+            for source in (node.home_source, node.away_source):
+                team = resolve_team_source(source, tournament, from_phase=prior)
+                if team:
+                    ids.add(team.id)
+        return ids
+
+    @staticmethod
     def _get_teams_in_scope(tournament, phase=None, group=None):
         if group is not None:
             team_ids = group.memberships.values_list("team_id", flat=True)
             return Team.objects.filter(id__in=team_ids).order_by("name")
-        if phase is not None and phase.groups.exists():
-            team_ids = phase.groups.values_list("memberships__team_id", flat=True)
-            return Team.objects.filter(id__in=team_ids).distinct().order_by("name")
+        if phase is not None:
+            if phase.groups.exists():
+                team_ids = phase.groups.values_list("memberships__team_id", flat=True)
+                return Team.objects.filter(id__in=team_ids).distinct().order_by("name")
+
+            # Eliminatoria u otra fase sin grupos: solo equipos que juegan esa instancia
+            team_ids = StandingsService._team_ids_from_phase_matches(tournament, phase)
+            if not team_ids and phase.phase_type == "knockout":
+                team_ids = StandingsService._team_ids_from_bracket(phase, tournament)
+            if team_ids:
+                return Team.objects.filter(id__in=team_ids).order_by("name")
+            return Team.objects.none()
         return Team.objects.filter(tournament=tournament).order_by("name")
 
     @staticmethod

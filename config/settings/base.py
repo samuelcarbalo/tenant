@@ -4,10 +4,10 @@ from datetime import timedelta
 
 from dotenv import load_dotenv  # Necesitas instalar python-dotenv
 
-# Cargar .env
-load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+# Cargar variables desde tenant/.env (secretos fuera del código)
+load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 
@@ -194,9 +194,9 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # ── Mercado Pago (Checkout Pro) ─────────────────────────────────────────────
-# Reemplazar con credenciales reales del Panel de Desarrolladores
-MERCADOPAGO_PUBLIC_KEY = os.getenv("MERCADOPAGO_PUBLIC_KEY", "YOUR_MP_PUBLIC_KEY")
-MERCADOPAGO_ACCESS_TOKEN = os.getenv("MERCADOPAGO_ACCESS_TOKEN", "YOUR_MP_ACCESS_TOKEN")
+# Credenciales en tenant/.env — ver .env.example
+MERCADOPAGO_PUBLIC_KEY = os.getenv("MERCADOPAGO_PUBLIC_KEY", "")
+MERCADOPAGO_ACCESS_TOKEN = os.getenv("MERCADOPAGO_ACCESS_TOKEN", "")
 MERCADOPAGO_WEBHOOK_URL = os.getenv("MERCADOPAGO_WEBHOOK_URL", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")

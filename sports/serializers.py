@@ -40,7 +40,21 @@ class TournamentCreateSerializer(serializers.ModelSerializer):
             "format_template",
             "format_group_count",
             "scoring_config",
+            "rules_url",
+            "lineup_size",
         ]
+
+    def validate(self, data):
+        lineup_size = data.get("lineup_size", 9)
+        if lineup_size not in (9, 10):
+            raise serializers.ValidationError(
+                {"lineup_size": "Solo se permiten 9 o 10 titulares."}
+            )
+        if data.get("sport_type") != "softball" and lineup_size == 10:
+            raise serializers.ValidationError(
+                {"lineup_size": "10 titulares solo aplica a softbol (con bateador designado)."}
+            )
+        return data
 
 
 class TournamentListSerializer(serializers.ModelSerializer):
@@ -76,6 +90,7 @@ class TournamentListSerializer(serializers.ModelSerializer):
             "posted_by",
             "structure_mode",
             "format_template",
+            "lineup_size",
         ]
 
 
@@ -582,9 +597,11 @@ class MatchLineupSerializer(serializers.ModelSerializer):
             "player_name",
             "player_photo",
             "is_starter",
+            "is_on_field",
             "position",
             "position_display",
             "jersey_number",
+            "batting_order",
             "substitution_minute",
             "status",
             "status_display",
@@ -640,8 +657,10 @@ class MatchLineupCreateSerializer(serializers.ModelSerializer):
             "team",
             "player",
             "is_starter",
+            "is_on_field",
             "position",
             "jersey_number",
+            "batting_order",
             "substitution_minute",
             "posted_by",
         ]
@@ -662,12 +681,23 @@ class MatchLineupBulkCreateSerializer(serializers.Serializer):
     """Crear la alineación completa de un equipo de una sola vez"""
 
     team = serializers.PrimaryKeyRelatedField(queryset=Team.objects.all())
-    players = MatchLineupCreateSerializer(many=True)
+    players = serializers.ListField(child=serializers.DictField())
 
     def validate(self, data):
-        starters = [p for p in data["players"] if p.get("is_starter", True)]
-        if len(starters) > 11:  # Ajusta según el deporte
-            raise serializers.ValidationError("No puedes tener más de 11 titulares")
+        from sports.services.lineup import validate_lineup_for_sport
+
+        match = self.context.get("match")
+        if not match:
+            return data
+
+        tournament = match.tournament
+        errors = validate_lineup_for_sport(
+            tournament.sport_type,
+            data["players"],
+            lineup_size=getattr(tournament, "lineup_size", 9) or 9,
+        )
+        if errors:
+            raise serializers.ValidationError({"players": errors})
         return data
 
 

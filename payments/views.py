@@ -145,6 +145,6 @@ def mp_public_config(request):
     """Expone la Public Key al frontend (seguro — es pública)."""
     return Response(
         {
-            "public_key": getattr(settings, "MERCADOPAGO_PUBLIC_KEY", "YOUR_MP_PUBLIC_KEY"),
+            "public_key": getattr(settings, "MERCADOPAGO_PUBLIC_KEY", ""),
         }
     )

@@ -27,7 +27,12 @@ CHANNEL_LAYERS = {
 # Email backend de consola
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
-# Logging simple
+# Throttling más permisivo en desarrollo (evita bloqueos tras pruebas intensivas)
+REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
+    **REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"],
+    "anon": "10000/day",
+    "user": "10000/day",
+}
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

@@ -17,36 +17,40 @@ from sports.services.advancement import advance_phase
 from sports.scoring import MatchResultService, StandingsService
 
 
-def _finish_quadrangular(tournament, phase, group, teams, rank_scores):
-    """
-    Finaliza 6 partidos del cuadrangular.
-    rank_scores: lista de 4 tuplas (runs_when_wins, runs_when_loses) por seed 1-4.
-    El seed 1 gana todos sus partidos, seed 2 gana vs 3 y 4, etc.
-    """
-    t1, t2, t3, t4 = teams
-    results = {
-        frozenset([t1.id, t2.id]): (5, 2) if t1.id < t2.id else (2, 5),
-        frozenset([t1.id, t3.id]): (4, 1) if t1.id < t3.id else (1, 4),
-        frozenset([t1.id, t4.id]): (6, 0) if t1.id < t4.id else (0, 6),
-        frozenset([t2.id, t3.id]): (3, 2) if t2.id < t3.id else (2, 3),
-        frozenset([t2.id, t4.id]): (4, 3) if t2.id < t4.id else (3, 4),
-        frozenset([t3.id, t4.id]): (2, 1) if t3.id < t4.id else (1, 2),
-    }
+def _finish_quadrangular(tournament, phase, group, teams):
+    """Finaliza round-robin: el primer equipo en la lista queda 1°, el segundo 2°, etc."""
+    seed = {t.id: i for i, t in enumerate(teams)}
 
     for home, away in combinations(teams, 2):
-        key = frozenset([home.id, away.id])
-        hr, ar = results[key]
+        if seed[home.id] < seed[away.id]:
+            hr, ar = 5, 2
+        else:
+            hr, ar = 2, 5
+
         if Match.objects.filter(
-            tournament=tournament, home_team=home, away_team=away, phase=phase, group=group
+            tournament=tournament,
+            home_team=home,
+            away_team=away,
+            phase=phase,
+            group=group,
         ).exists():
             m = Match.objects.get(
-                tournament=tournament, home_team=home, away_team=away, phase=phase, group=group
+                tournament=tournament,
+                home_team=home,
+                away_team=away,
+                phase=phase,
+                group=group,
             )
         else:
             m = Match.objects.get(
-                tournament=tournament, home_team=away, away_team=home, phase=phase, group=group
+                tournament=tournament,
+                home_team=away,
+                away_team=home,
+                phase=phase,
+                group=group,
             )
             hr, ar = ar, hr
+
         MatchResultService.finalize_match(m, {"home_runs": hr, "away_runs": ar})
 
 
@@ -120,8 +124,8 @@ class Command(BaseCommand):
             tournament, phase, group_b, user, timezone.now(), "Campo B"
         )
 
-        _finish_quadrangular(tournament, phase, group_a, teams_a, None)
-        _finish_quadrangular(tournament, phase, group_b, teams_b, None)
+        _finish_quadrangular(tournament, phase, group_a, teams_a)
+        _finish_quadrangular(tournament, phase, group_b, teams_b)
 
         self.stdout.write(self.style.SUCCESS("=== CUADRANGULAR A ==="))
         for row in StandingsService.compute(tournament, phase=phase, group=group_a):
