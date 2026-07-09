@@ -95,12 +95,33 @@ class ProfileViewSet(viewsets.ModelViewSet):
     def me(self, request):
         """
         Obtener perfil del usuario autenticado.
+        Superusuarios de plataforma sin perfil reciben datos mínimos del User.
         """
+        user = request.user
         try:
-            profile =  Profile.objects.select_related('user', 'organization').get(user=request.user)
+            profile = Profile.objects.select_related('user', 'organization').get(user=user)
             serializer = self.get_serializer(profile)
             return Response(serializer.data)
         except Profile.DoesNotExist:
+            if user.is_superuser:
+                return Response({
+                    "id": None,
+                    "user": str(user.id),
+                    "user_email": user.email,
+                    "user_name": user.full_name,
+                    "organization": str(user.organization_id) if user.organization_id else None,
+                    "organization_name": user.organization.name if user.organization else None,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "phone": user.phone or "",
+                    "bio": "",
+                    "location": "",
+                    "department": "",
+                    "job_title": "",
+                    "avatar": None,
+                    "completion_percentage": 100,
+                    "is_platform_admin": True,
+                })
             return Response(
                 {'error': 'Perfil no encontrado.'},
                 status=status.HTTP_404_NOT_FOUND

@@ -4,7 +4,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.throttling import AnonRateThrottle
+from rest_framework.throttling import AnonRateThrottle, ScopedRateThrottle
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authentication import SessionAuthentication
@@ -32,9 +32,14 @@ class LoginThrottle(AnonRateThrottle):
     rate = "5/min"
 
 
+class RegisterThrottle(ScopedRateThrottle):
+    scope = "register"
+
+
 class CustomTokenObtainPairView(TokenObtainPairView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [LoginThrottle]
 
     def post(self, request, *args, **kwargs):
         # Usar nuestro serializer manual
@@ -57,6 +62,8 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                     "email": user.email,
                     "username": user.username,
                     "company_name": user.company_name,
+                    "role": user.role,
+                    "is_superuser": user.is_superuser,
                     "organization": {
                         "id": str(user.organization.id),
                         "name": user.organization.name,
@@ -73,7 +80,7 @@ class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     permission_classes = [permissions.AllowAny]
     serializer_class = UserRegistrationSerializer
-    throttle_classes = [AnonRateThrottle]
+    throttle_classes = [RegisterThrottle]
 
     authentication_classes = []  # ← Agrega
 
@@ -97,6 +104,7 @@ class RegisterView(generics.CreateAPIView):
                     "full_name": user.full_name,
                     "company_name": user.company_name,
                     "role": user.role,
+                    "credits": user.credits,
                     "organization": {
                         "id": str(user.organization.id),
                         "name": user.organization.name,
@@ -187,6 +195,9 @@ def verify_token(request):
                 "id": str(user.id),
                 "email": user.email,
                 "role": user.role,
+                "is_superuser": user.is_superuser,
+                "credits": user.credits,
+                "user_type": user.user_type,
                 "organization": {
                     "id": str(user.organization.id) if user.organization else None,
                     "name": user.organization.name if user.organization else None,

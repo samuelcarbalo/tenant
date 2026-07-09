@@ -67,6 +67,18 @@ class JobOffer(TimeStampedModel):
     is_active = models.BooleanField(default=True, db_index=True)
     is_featured = models.BooleanField(default=False)
 
+    MODERATION_STATUS_CHOICES = [
+        ("approved", "Aprobada"),
+        ("pendiente_revision", "Pendiente revisión"),
+        ("rejected", "Rechazada"),
+    ]
+    moderation_status = models.CharField(
+        max_length=32,
+        choices=MODERATION_STATUS_CHOICES,
+        default="approved",
+        db_index=True,
+    )
+
     # Contadores
     views_count = models.PositiveIntegerField(default=0)
     applications_count = models.PositiveIntegerField(default=0)

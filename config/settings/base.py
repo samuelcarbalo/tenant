@@ -4,10 +4,10 @@ from datetime import timedelta
 
 from dotenv import load_dotenv  # Necesitas instalar python-dotenv
 
-# Cargar .env
-load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+# Cargar variables desde tenant/.env (secretos fuera del código)
+load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 
@@ -18,6 +18,10 @@ AUTHENTICATION_BACKENDS = [
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
 
 CORS_ALLOW_HEADERS = [
@@ -27,6 +31,7 @@ CORS_ALLOW_HEADERS = [
 ]
 # Resto del archivo...
 INSTALLED_APPS = [
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -39,6 +44,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "django_filters",
+    "channels",
     # Local apps
     "core",
     "organizations",
@@ -46,6 +52,14 @@ INSTALLED_APPS = [
     "profiles",
     "jobs",
     "sports",
+    "real_estate",
+    "messaging",
+    "notifications",
+    "payments",
+    "moderation",
+    "advertising",
+    "events",
+    "contact",
 ]
 CACHES = {
     "default": {
@@ -155,4 +169,45 @@ SIMPLE_JWT = {
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
+
+# Django Channels
+ASGI_APPLICATION = "config.asgi.application"
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1")
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [REDIS_URL],
+        },
+    },
+}
+
+# Media files
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+# ── Mercado Pago (Checkout Pro) ─────────────────────────────────────────────
+# Credenciales en tenant/.env — ver .env.example
+MERCADOPAGO_PUBLIC_KEY = os.getenv("MERCADOPAGO_PUBLIC_KEY", "")
+MERCADOPAGO_ACCESS_TOKEN = os.getenv("MERCADOPAGO_ACCESS_TOKEN", "")
+MERCADOPAGO_WEBHOOK_URL = os.getenv("MERCADOPAGO_WEBHOOK_URL", "")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+
+# Comisiones MP Colombia (referencia fiscal DIAN)
+MP_COMMISSION_RATE = float(os.getenv("MP_COMMISSION_RATE", "0.0329"))
+MP_IVA_RATE = float(os.getenv("MP_IVA_RATE", "0.19"))
+MP_WITHDRAWAL_ALERT_DAYS = int(os.getenv("MP_WITHDRAWAL_ALERT_DAYS", "150"))
+MP_WITHDRAWAL_MAX_DAYS = int(os.getenv("MP_WITHDRAWAL_MAX_DAYS", "180"))
+
+# Publicidad: desactiva que el dueño del torneo suba banners gratis
+TOURNAMENT_OWNER_BANNERS_ENABLED = (
+    os.getenv("TOURNAMENT_OWNER_BANNERS_ENABLED", "false").lower() == "true"
+)

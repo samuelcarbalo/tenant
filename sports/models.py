@@ -54,9 +54,46 @@ class Tournament(TimeStampedModel):
     ]
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
 
+    MODERATION_STATUS_CHOICES = [
+        ("approved", "Aprobada"),
+        ("pendiente_revision", "Pendiente revisión"),
+        ("rejected", "Rechazada"),
+    ]
+    moderation_status = models.CharField(
+        max_length=32,
+        choices=MODERATION_STATUS_CHOICES,
+        default="approved",
+        db_index=True,
+    )
+
     # Imagen
     logo = models.URLField(blank=True)
     banner = models.URLField(blank=True)
+
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
+
+    STRUCTURE_MODE_CHOICES = [
+        ("legacy", "Liga simple"),
+        ("structured", "Multi-fase"),
+    ]
+    structure_mode = models.CharField(
+        max_length=20, choices=STRUCTURE_MODE_CHOICES, default="legacy"
+    )
+    format_template = models.CharField(max_length=50, blank=True, default="")
+    scoring_config = models.JSONField(default=dict, blank=True)
+    rules_url = models.URLField(max_length=500, blank=True, verbose_name="Reglamento (URL)")
+    lineup_size = models.PositiveSmallIntegerField(
+        default=9,
+        help_text="Titulares en campo: 9 estándar, 10 con bateador designado (softbol).",
+    )
+    regulation_innings = models.PositiveSmallIntegerField(
+        default=7,
+        help_text="Entradas reglamentarias (softbol: 7 estándar).",
+    )
+    mercy_rule_enabled = models.BooleanField(
+        default=True,
+        help_text="Aplica knockout por diferencia de carreras (softbol).",
+    )
 
     class Meta:
         db_table = "tournaments"
@@ -64,6 +101,127 @@ class Tournament(TimeStampedModel):
 
     def __str__(self):
         return self.name
+
+
+class TournamentPhase(TimeStampedModel):
+    """Fase de un torneo (grupos, eliminatoria, etc.)."""
+
+    PHASE_TYPES = [
+        ("group_stage", "Fase de grupos"),
+        ("round_robin", "Todos contra todos"),
+        ("knockout", "Eliminatoria"),
+        ("placement", "Partido por puesto"),
+    ]
+    STATUS_CHOICES = [
+        ("pending", "Pendiente"),
+        ("active", "En curso"),
+        ("finished", "Finalizada"),
+    ]
+
+    tournament = models.ForeignKey(
+        Tournament, on_delete=models.CASCADE, related_name="phases"
+    )
+    name = models.CharField(max_length=100)
+    slug = models.SlugField()
+    phase_type = models.CharField(max_length=20, choices=PHASE_TYPES)
+    order = models.PositiveSmallIntegerField(default=1)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    config = models.JSONField(default=dict, blank=True)
+    advancement_rules = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "tournament_phases"
+        ordering = ["order", "name"]
+        unique_together = ["tournament", "slug"]
+
+    def __str__(self):
+        return f"{self.tournament.name} — {self.name}"
+
+
+class CompetitionGroup(TimeStampedModel):
+    """Grupo o cuadrangular dentro de una fase."""
+
+    phase = models.ForeignKey(
+        TournamentPhase, on_delete=models.CASCADE, related_name="groups"
+    )
+    name = models.CharField(max_length=50)
+    slug = models.SlugField()
+    order = models.PositiveSmallIntegerField(default=1)
+    max_teams = models.PositiveSmallIntegerField(default=4)
+
+    class Meta:
+        db_table = "competition_groups"
+        ordering = ["order", "name"]
+        unique_together = ["phase", "slug"]
+
+    def __str__(self):
+        return f"{self.phase.name} — {self.name}"
+
+
+class GroupMembership(models.Model):
+    """Equipo asignado a un grupo."""
+
+    group = models.ForeignKey(
+        CompetitionGroup, on_delete=models.CASCADE, related_name="memberships"
+    )
+    team = models.ForeignKey(
+        "Team", on_delete=models.CASCADE, related_name="group_memberships"
+    )
+    seed = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = "group_memberships"
+        unique_together = ["group", "team"]
+
+    def __str__(self):
+        return f"{self.team.name} @ {self.group.name}"
+
+
+class Bracket(TimeStampedModel):
+    """Eliminatoria asociada a una fase."""
+
+    phase = models.OneToOneField(
+        TournamentPhase, on_delete=models.CASCADE, related_name="bracket"
+    )
+    name = models.CharField(max_length=100, default="Eliminatoria")
+
+    class Meta:
+        db_table = "brackets"
+
+    def __str__(self):
+        return f"{self.phase.tournament.name} — {self.name}"
+
+
+class BracketNode(TimeStampedModel):
+    """Nodo del bracket (semifinal, final, etc.)."""
+
+    ROUND_CHOICES = [
+        ("quarterfinal", "Cuartos de final"),
+        ("semifinal", "Semifinal"),
+        ("final", "Final"),
+        ("third_place", "Tercer puesto"),
+    ]
+
+    bracket = models.ForeignKey(Bracket, on_delete=models.CASCADE, related_name="nodes")
+    round = models.CharField(max_length=20, choices=ROUND_CHOICES)
+    position = models.PositiveSmallIntegerField(default=1)
+    match = models.OneToOneField(
+        "Match",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="bracket_node",
+    )
+    home_source = models.JSONField(default=dict, blank=True)
+    away_source = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "bracket_nodes"
+        ordering = ["round", "position"]
+        unique_together = ["bracket", "round", "position"]
+
+    def __str__(self):
+        return f"{self.get_round_display()} #{self.position}"
 
 
 class Team(TimeStampedModel):
@@ -120,6 +278,8 @@ class Team(TimeStampedModel):
     strikes_out = models.PositiveIntegerField(default=0)
     strikes_out_against = models.PositiveIntegerField(default=0)
     average_strikes_out = models.FloatField(default=0.0)
+
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
 
     class Meta:
         db_table = "teams"
@@ -211,6 +371,15 @@ class Player(TimeStampedModel):
     strikes_out_against = models.PositiveIntegerField(default=0)
     average_strikes_out = models.FloatField(default=0.0)
 
+    # Bateo softbol (limpio)
+    at_bats = models.PositiveIntegerField(default=0)
+    hits = models.PositiveIntegerField(default=0)
+    runs_scored = models.PositiveIntegerField(default=0)
+    rbis = models.PositiveIntegerField(default=0)
+    batting_average = models.FloatField(default=0.0)
+
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
+
     class Meta:
         db_table = "players"
         ordering = ["jersey_number", "last_name", "first_name"]
@@ -284,6 +453,31 @@ class Match(TimeStampedModel):
     match_week = models.PositiveIntegerField(default=1)
     notes = models.TextField(blank=True)
 
+    phase = models.ForeignKey(
+        TournamentPhase,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="matches",
+    )
+    group = models.ForeignKey(
+        CompetitionGroup,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="matches",
+    )
+    MATCH_TYPES = [
+        ("group", "Fase de grupos"),
+        ("knockout", "Eliminatoria"),
+        ("friendly", "Amistoso"),
+        ("legacy", "Liga simple"),
+    ]
+    match_type = models.CharField(max_length=20, choices=MATCH_TYPES, default="legacy")
+    stats_counted = models.BooleanField(default=False)
+
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
+
     class Meta:
         db_table = "matches"
         ordering = ["match_date"]
@@ -293,13 +487,19 @@ class Match(TimeStampedModel):
 
     @property
     def winner(self):
-        if self.home_score is None or self.away_score is None:
+        from sports.scoring import get_scoring_config
+
+        config = get_scoring_config(self.tournament)
+        home_field, away_field = config["primary_fields"]
+        home_val = getattr(self, home_field)
+        away_val = getattr(self, away_field)
+        if home_val is None or away_val is None:
             return None
-        if self.home_score > self.away_score:
+        if home_val > away_val:
             return self.home_team
-        elif self.away_score > self.home_score:
+        if away_val > home_val:
             return self.away_team
-        return None  # Empate
+        return None if config.get("allows_draw") else None
 
 
 class MatchEvent(TimeStampedModel):
@@ -331,11 +531,31 @@ class MatchEvent(TimeStampedModel):
         ("penalty_missed", "Penal Fallado"),
         ("assist", "Asistencia"),
         ("expelled", "Expulsado"),
+        # Softbol / béisbol
+        ("single", "Sencillo"),
+        ("double", "Doble"),
+        ("triple", "Triple"),
+        ("home_run", "Jonrón"),
+        ("walk", "Base por bolas"),
+        ("strikeout", "Ponche"),
+        ("run", "Carrera anotada"),
+        ("rbi", "Carrera impulsada"),
+        ("error", "Error"),
+        ("out", "Out"),
     ]
     event_type = models.CharField(max_length=20, choices=EVENT_TYPES)
 
-    minute = models.PositiveIntegerField()  # Minuto del partido
+    minute = models.PositiveIntegerField(null=True, blank=True)  # Minuto (fútbol)
+    # Contexto softbol
+    inning_number = models.PositiveSmallIntegerField(null=True, blank=True)
+    inning_half = models.CharField(
+        max_length=6, blank=True,
+        choices=[("top", "Alta"), ("bottom", "Baja")],
+    )
+    rbi = models.PositiveSmallIntegerField(default=0)
     description = models.TextField(blank=True)
+
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
 
     class Meta:
         db_table = "match_events"
@@ -379,11 +599,14 @@ class MatchLineup(TimeStampedModel):
     # Si entró como sustituto, en qué minuto
     substitution_minute = models.PositiveIntegerField(null=True, blank=True)
     entry_number = models.PositiveIntegerField(default=1)
+    batting_order = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
 
     class Meta:
         db_table = "match_lineups"
         unique_together = ["match", "player", "entry_number"]
-        ordering = ["-is_starter", "jersey_number"]
+        ordering = ["batting_order", "-is_starter", "jersey_number"]
 
     def __str__(self):
         role = "Titular" if self.is_starter else "Suplente"
@@ -410,6 +633,8 @@ class MatchPeriod(TimeStampedModel):
 
     is_active = models.BooleanField(default=False)
     is_completed = models.BooleanField(default=False)
+
+    impressions = models.PositiveIntegerField(default=0, verbose_name="Impresiones")
 
     class Meta:
         db_table = "match_periods"
@@ -451,6 +676,43 @@ class MatchPeriod(TimeStampedModel):
         return self.elapsed_seconds // 60
 
 
+class MatchInning(TimeStampedModel):
+    """
+    Media entrada de un partido de softbol/béisbol (line score).
+    Convención: en la 'alta' (top) batea el visitante; en la 'baja' (bottom) el local.
+    """
+
+    HALF_CHOICES = [
+        ("top", "Alta"),
+        ("bottom", "Baja"),
+    ]
+
+    match = models.ForeignKey(
+        Match, on_delete=models.CASCADE, related_name="innings"
+    )
+    number = models.PositiveSmallIntegerField()  # 1, 2, 3...
+    half = models.CharField(max_length=6, choices=HALF_CHOICES)
+
+    runs = models.PositiveIntegerField(default=0)
+    hits = models.PositiveIntegerField(default=0)
+    errors = models.PositiveIntegerField(default=0)
+
+    is_complete = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "match_innings"
+        unique_together = ["match", "number", "half"]
+        # 'top' > 'bottom' alfabéticamente: -half deja la alta antes que la baja.
+        ordering = ["number", "-half"]
+
+    def __str__(self):
+        return f"{self.match} - E{self.number}{'▲' if self.half == 'top' else '▼'}"
+
+    @property
+    def batting_team(self):
+        return self.match.away_team if self.half == "top" else self.match.home_team
+
+
 class AdvertisementBanner(TimeStampedModel):
     """
     Banners publicitarios / Imágenes publicitarias
@@ -471,6 +733,23 @@ class AdvertisementBanner(TimeStampedModel):
     image = models.URLField(verbose_name="URL de la imagen")
     link_url = models.URLField(blank=True, verbose_name="URL de destino")
 
+    sponsorship = models.ForeignKey(
+        "advertising.TournamentSponsorship",
+        on_delete=models.CASCADE,
+        related_name="banners",
+        null=True,
+        blank=True,
+        verbose_name="Patrocinio",
+    )
+    campaign = models.ForeignKey(
+        "advertising.ClassifiedAdCampaign",
+        on_delete=models.CASCADE,
+        related_name="banners",
+        null=True,
+        blank=True,
+        verbose_name="Campaña",
+    )
+
     # Posición / ubicación en la app
     POSITION_CHOICES = [
         ("home_hero", "Home - Banner Principal"),
@@ -479,6 +758,12 @@ class AdvertisementBanner(TimeStampedModel):
         ("match_detail", "Detalle de Partido"),
         ("standings_top", "Tabla de Posiciones - Arriba"),
         ("standings_bottom", "Tabla de Posiciones - Abajo"),
+        ("jobs_list_top", "Empleos - Listado"),
+        ("job_detail", "Empleo - Detalle"),
+        ("listings_list_top", "Inmuebles - Listado"),
+        ("listing_detail", "Inmueble - Detalle"),
+        ("events_list_top", "Eventos - Listado"),
+        ("event_detail", "Evento - Detalle"),
         ("footer", "Footer"),
         ("popup", "Popup Modal"),
     ]

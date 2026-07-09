@@ -1,10 +1,58 @@
+# =============================================================================
+# CordobaTech — Backend Multi-Tenant
+# Python 3.11+ recomendado
+# Instalar: pip install -r requirements.txt
+# =============================================================================
+
+# --- Django core ---
 Django>=4.2,<5.0
+asgiref>=3.7.0
+
+# --- Django REST Framework ---
 djangorestframework>=3.14.0
-djangorestframework-simplejwt>=5.3.0
-django-cors-headers>=4.3.0
 django-filter>=23.5
-psycopg2-binary>=2.9.9
-redis>=5.0.0
+
+# --- Autenticación JWT ---
+djangorestframework-simplejwt>=5.3.0
+
+# --- CORS (frontend React) ---
+django-cors-headers>=4.3.0
+
+# --- Variables de entorno ---
 python-dotenv>=1.0.0
+
+# --- Validación de schemas (organizations) ---
 jsonschema>=4.20.0
+
+# --- Base de datos ---
+psycopg2-binary>=2.9.9          # PostgreSQL (producción)
+# SQLite viene incluido en Python (desarrollo)
+
+# --- Cache / Cola (Channels en producción) ---
+redis>=5.0.0
+
+# --- WebSockets / ASGI ---
+channels>=4.0.0
+channels-redis>=4.2.0           # Channel layer con Redis (prod)
+daphne>=4.0.0                   # Servidor ASGI (HTTP + WebSocket)
+# Dependencias transitivas de daphne/channels (se instalan solas):
+#   autobahn, Twisted, pyOpenSSL, pyasn1, attrs, etc.
+
+# --- Sanitización HTML (mensajería) ---
+bleach>=6.0.0
+
+# --- Pagos ---
+mercadopago>=2.2.0              # Checkout Pro — Mercado Pago
+
+# --- Servidor WSGI/HTTP (producción) ---
 gunicorn>=21.2.0
+
+# --- Static files (producción) ---
+whitenoise>=6.6.0              # Servir static files sin nginx
+
+# =============================================================================
+# Opcionales (no requeridos hoy, útiles en prod)
+# =============================================================================
+# django-redis>=5.4.0           # (No necesario: Django 4.2 trae RedisCache nativo)
+# Pillow>=10.0.0                # Procesamiento de imágenes (si se validan uploads con PIL)
+# sentry-sdk>=1.40.0            # Monitoreo de errores (se activa si SENTRY_DSN está seteado)

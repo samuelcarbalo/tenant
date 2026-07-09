@@ -77,9 +77,9 @@ class Profile(TimeStampedModel):
         Validar datos dinámicos contra el schema de la organización.
         """
         if self.organization and self.dynamic_data:
-            is_valid = self.organization.validate_schema(self.dynamic_data)
+            is_valid, error_msg = self.organization.validate_profile_data(self.dynamic_data)
             if not is_valid:
-                raise ValidationError(f'Datos de perfil inválidos: {error}')
+                raise ValidationError(f'Datos de perfil inválidos: {error_msg}')
 
     def save(self, *args, **kwargs):
         # Calcular porcentaje de completitud

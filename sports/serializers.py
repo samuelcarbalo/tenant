@@ -1,6 +1,13 @@
+from datetime import timedelta
+from django.utils import timezone
 from rest_framework import serializers
 from .models import (
     Tournament,
+    TournamentPhase,
+    CompetitionGroup,
+    GroupMembership,
+    Bracket,
+    BracketNode,
     Team,
     Player,
     Match,
@@ -11,6 +18,9 @@ from .models import (
 
 
 class TournamentCreateSerializer(serializers.ModelSerializer):
+    format_template = serializers.CharField(required=False, allow_blank=True, default="")
+    format_group_count = serializers.IntegerField(required=False, default=1, write_only=True)
+
     class Meta:
         model = Tournament
         fields = [
@@ -26,7 +36,27 @@ class TournamentCreateSerializer(serializers.ModelSerializer):
             "max_players_per_team",
             "logo",
             "banner",
+            "structure_mode",
+            "format_template",
+            "format_group_count",
+            "scoring_config",
+            "rules_url",
+            "lineup_size",
+            "regulation_innings",
+            "mercy_rule_enabled",
         ]
+
+    def validate(self, data):
+        lineup_size = data.get("lineup_size", 9)
+        if lineup_size not in (9, 10):
+            raise serializers.ValidationError(
+                {"lineup_size": "Solo se permiten 9 o 10 titulares."}
+            )
+        if data.get("sport_type") != "softball" and lineup_size == 10:
+            raise serializers.ValidationError(
+                {"lineup_size": "10 titulares solo aplica a softbol (con bateador designado)."}
+            )
+        return data
 
 
 class TournamentListSerializer(serializers.ModelSerializer):
@@ -60,6 +90,9 @@ class TournamentListSerializer(serializers.ModelSerializer):
             "teams_count",
             "matches_count",
             "posted_by",
+            "structure_mode",
+            "format_template",
+            "lineup_size",
         ]
 
 
@@ -118,10 +151,12 @@ class TeamListSerializer(serializers.ModelSerializer):
         ]
 
     def get_position(self, obj):
-        """Calcular posición en la tabla"""
-        teams = Team.objects.filter(tournament=obj.tournament).order_by(
-            "-points", "-goals_for", "name"
-        )
+        """Calcular posición en la tabla (orden según deporte)."""
+        if obj.tournament.sport_type == "softball":
+            order = ("-points", "-won", "-average", "-runs", "name")
+        else:
+            order = ("-points", "-goals_for", "name")
+        teams = Team.objects.filter(tournament=obj.tournament).order_by(*order)
         for idx, team in enumerate(teams, 1):
             if team.id == obj.id:
                 return idx
@@ -208,6 +243,15 @@ class PlayerListSerializer(serializers.ModelSerializer):
             "birth_date",
             "tournament",
             "tournament_slug",
+            # Bateo softbol
+            "at_bats",
+            "hits",
+            "runs_scored",
+            "rbis",
+            "batting_average",
+            "home_runs",
+            "walks",
+            "strikes_out",
         ]
 
 
@@ -215,6 +259,7 @@ class PlayerDetailSerializer(serializers.ModelSerializer):
     """Serializer detallado de jugador"""
 
     team_name = serializers.CharField(source="team.name", read_only=True)
+    team_slug = serializers.CharField(source="team.slug", read_only=True)
     tournament_name = serializers.CharField(source="tournament.name", read_only=True)
     position_display = serializers.CharField(
         source="get_position_display", read_only=True
@@ -268,12 +313,16 @@ class MatchEventSerializer(serializers.ModelSerializer):
             "event_type",
             "event_type_display",
             "minute",
+            "inning_number",
+            "inning_half",
+            "rbi",
             "player",
             "player_name",
             "team",
             "team_name",
             "description",
         ]
+        extra_kwargs = {"minute": {"required": False, "allow_null": True}}
 
 
 class MatchListSerializer(serializers.ModelSerializer):
@@ -309,6 +358,10 @@ class MatchListSerializer(serializers.ModelSerializer):
             "status",
             "status_display",
             "round_number",
+            "match_week",
+            "match_type",
+            "phase",
+            "group",
         ]
 
 
@@ -324,10 +377,172 @@ class MatchDetailSerializer(serializers.ModelSerializer):
     # Logos
     home_team_logo = serializers.CharField(source="home_team.logo", read_only=True)
     away_team_logo = serializers.CharField(source="away_team.logo", read_only=True)
+    sport_type = serializers.CharField(source="tournament.sport_type", read_only=True)
+    regulation_innings = serializers.IntegerField(
+        source="tournament.regulation_innings", read_only=True
+    )
+    line_score = serializers.SerializerMethodField()
 
     class Meta:
         model = Match
         fields = "__all__"
+
+    def get_line_score(self, obj):
+        if obj.tournament.sport_type != "softball":
+            return None
+        from sports.services.innings import build_line_score
+
+        return build_line_score(obj)
+
+
+class GroupMembershipSerializer(serializers.ModelSerializer):
+    team = TeamListSerializer(read_only=True)
+    team_id = serializers.PrimaryKeyRelatedField(
+        queryset=Team.objects.all(), source="team", write_only=True
+    )
+
+    class Meta:
+        model = GroupMembership
+        fields = ["id", "team", "team_id", "seed"]
+
+
+class CompetitionGroupSerializer(serializers.ModelSerializer):
+    memberships = GroupMembershipSerializer(many=True, read_only=True)
+    teams_count = serializers.IntegerField(source="memberships.count", read_only=True)
+
+    class Meta:
+        model = CompetitionGroup
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "order",
+            "max_teams",
+            "teams_count",
+            "memberships",
+        ]
+
+
+class BracketNodeSerializer(serializers.ModelSerializer):
+    round_display = serializers.CharField(source="get_round_display", read_only=True)
+    match = MatchListSerializer(read_only=True)
+    home_team = serializers.SerializerMethodField()
+    away_team = serializers.SerializerMethodField()
+    home_label = serializers.SerializerMethodField()
+    away_label = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BracketNode
+        fields = [
+            "id",
+            "round",
+            "round_display",
+            "position",
+            "match",
+            "home_source",
+            "away_source",
+            "home_team",
+            "away_team",
+            "home_label",
+            "away_label",
+        ]
+
+    def _resolve(self, obj, side):
+        from sports.services.advancement import resolve_team_source
+
+        source = obj.home_source if side == "home" else obj.away_source
+        tournament = obj.bracket.phase.tournament
+        from_phase = self.context.get("from_phase")
+        team = resolve_team_source(source, tournament, from_phase=from_phase)
+        if team:
+            return TeamListSerializer(team).data
+        return None
+
+    def get_home_team(self, obj):
+        return self._resolve(obj, "home")
+
+    def get_away_team(self, obj):
+        return self._resolve(obj, "away")
+
+    def _label(self, source):
+        if not source:
+            return "Por definir"
+        t = source.get("type")
+        if t == "group_rank":
+            return f"{source.get('rank')}° {source.get('group_slug', 'grupo')}"
+        if t == "overall_rank":
+            return f"{source.get('rank')}° fase regular"
+        if t == "bracket_winner":
+            return f"Ganador {source.get('round')} #{source.get('position')}"
+        if t == "team":
+            return "Equipo fijo"
+        return "Por definir"
+
+    def get_home_label(self, obj):
+        return self._label(obj.home_source)
+
+    def get_away_label(self, obj):
+        return self._label(obj.away_source)
+
+
+class BracketSerializer(serializers.ModelSerializer):
+    nodes = BracketNodeSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Bracket
+        fields = ["id", "name", "nodes"]
+
+
+class TournamentPhaseSerializer(serializers.ModelSerializer):
+    groups = CompetitionGroupSerializer(many=True, read_only=True)
+    bracket = BracketSerializer(read_only=True)
+    phase_type_display = serializers.CharField(
+        source="get_phase_type_display", read_only=True
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = TournamentPhase
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "phase_type",
+            "phase_type_display",
+            "order",
+            "status",
+            "status_display",
+            "config",
+            "advancement_rules",
+            "groups",
+            "bracket",
+        ]
+
+
+class TournamentStructureSerializer(serializers.Serializer):
+    structure_mode = serializers.CharField()
+    format_template = serializers.CharField()
+    phases = TournamentPhaseSerializer(many=True)
+
+
+class AssignTeamsToGroupSerializer(serializers.Serializer):
+    group_id = serializers.UUIDField()
+    team_ids = serializers.ListField(
+        child=serializers.UUIDField(), allow_empty=False
+    )
+
+
+class GenerateFixtureSerializer(serializers.Serializer):
+    phase_id = serializers.UUIDField()
+    group_id = serializers.UUIDField(required=False, allow_null=True)
+    match_date = serializers.DateTimeField()
+    venue = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class AdvancePhaseSerializer(serializers.Serializer):
+    from_phase = serializers.SlugField()
+    match_date = serializers.DateTimeField(required=False, allow_null=True)
+    venue = serializers.CharField(required=False, allow_blank=True, default="")
 
 
 class MatchCreateUpdateSerializer(serializers.ModelSerializer):
@@ -345,6 +560,9 @@ class MatchCreateUpdateSerializer(serializers.ModelSerializer):
             "round_number",
             "match_week",
             "notes",
+            "phase",
+            "group",
+            "match_type",
         ]
 
     def validate(self, data):
@@ -408,9 +626,11 @@ class MatchLineupSerializer(serializers.ModelSerializer):
             "player_name",
             "player_photo",
             "is_starter",
+            "is_on_field",
             "position",
             "position_display",
             "jersey_number",
+            "batting_order",
             "substitution_minute",
             "status",
             "status_display",
@@ -466,8 +686,10 @@ class MatchLineupCreateSerializer(serializers.ModelSerializer):
             "team",
             "player",
             "is_starter",
+            "is_on_field",
             "position",
             "jersey_number",
+            "batting_order",
             "substitution_minute",
             "posted_by",
         ]
@@ -488,12 +710,23 @@ class MatchLineupBulkCreateSerializer(serializers.Serializer):
     """Crear la alineación completa de un equipo de una sola vez"""
 
     team = serializers.PrimaryKeyRelatedField(queryset=Team.objects.all())
-    players = MatchLineupCreateSerializer(many=True)
+    players = serializers.ListField(child=serializers.DictField())
 
     def validate(self, data):
-        starters = [p for p in data["players"] if p.get("is_starter", True)]
-        if len(starters) > 11:  # Ajusta según el deporte
-            raise serializers.ValidationError("No puedes tener más de 11 titulares")
+        from sports.services.lineup import validate_lineup_for_sport
+
+        match = self.context.get("match")
+        if not match:
+            return data
+
+        tournament = match.tournament
+        errors = validate_lineup_for_sport(
+            tournament.sport_type,
+            data["players"],
+            lineup_size=getattr(tournament, "lineup_size", 9) or 9,
+        )
+        if errors:
+            raise serializers.ValidationError({"players": errors})
         return data
 
 
@@ -559,10 +792,23 @@ class AdvertisementBannerCreateUpdateSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, data):
-        # Validar que fecha fin sea posterior a fecha inicio
+        # Obtener start_date de los datos o de la instancia existente o usar hoy
         start = data.get("start_date")
+        if not start:
+            if self.instance:
+                start = self.instance.start_date
+            else:
+                start = timezone.now().date()
+                data["start_date"] = start
+
+        # Si no se envía end_date, poner automáticamente 30 días después de start_date
         end = data.get("end_date")
-        if start and end and end < start:
+        if not end:
+            end = start + timedelta(days=30)
+            data["end_date"] = end
+
+        # Validar que fecha fin sea posterior a fecha inicio
+        if end < start:
             raise serializers.ValidationError(
                 {"end_date": "La fecha de fin debe ser posterior a la fecha de inicio."}
             )

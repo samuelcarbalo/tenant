@@ -1,0 +1,23 @@
+# Secretos — nunca commitear (incluye plantillas .env.example)
+.env
+.env.*
+
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Django
+db.sqlite3
+media/
+*.log
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
