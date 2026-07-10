@@ -180,3 +180,9 @@ if SENTRY_DSN:
         )
     except ImportError:
         pass
+# Al final de production.py
+print("=" * 60)
+print("DEBUG CORS:")
+print("CORS_ALLOWED_ORIGINS raw env:", os.getenv("CORS_ALLOWED_ORIGINS", "NO SET"))
+print("CORS_ALLOWED_ORIGINS parsed:", CORS_ALLOWED_ORIGINS)
+print("=" * 60)
