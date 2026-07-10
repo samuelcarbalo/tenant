@@ -64,14 +64,35 @@ else:
         }
     }
 # ── Cache + Channel layer (Redis) ───────────────────────────────────────────
-REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1")
+# ── Cache + Channel layer ──────────────────────────────────────────────────
+REDIS_URL = os.getenv("REDIS_URL", "")
 
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": REDIS_URL,
+if REDIS_URL and "127.0.0.1" not in REDIS_URL and "localhost" not in REDIS_URL:
+    # Redis real configurado
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": REDIS_URL,
+        }
     }
-}
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {"hosts": [REDIS_URL]},
+        }
+    }
+else:
+    # Fallback seguro: memoria local
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        }
+    }
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        }
+    }
 
 CHANNEL_LAYERS = {
     "default": {
