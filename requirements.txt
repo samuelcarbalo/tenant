@@ -1,28 +1,63 @@
-aiohappyeyeballs==2.6.1
-aiohttp==3.13.0
-aiosignal==1.4.0
-attrs==25.4.0
-certifi==2025.10.5
-charset-normalizer==3.4.4
-chevron==0.14.0
-frozenlist==1.8.0
-idna==3.10
-mpmath==1.3.0
-multidict==6.7.0
-pillow==11.3.0
-propcache==0.4.1
-psycopg2==2.9.11
-pytz==2025.2
-pywin32==311
-PyYAML==6.0.2
-requests==2.32.5
-text-unidecode==1.3
-tomlkit==0.13.3
-types-awscrt==0.29.2
-types-s3transfer==0.16.0
-typing_extensions==4.15.0
-tzdata==2025.2
-urllib3==2.5.0
-watchdog==4.0.2
-wheel==0.45.1
-yarl==1.22.0
+# =============================================================================
+# CordobaTech — Backend Multi-Tenant
+# Python 3.11+ recomendado
+# Instalar: pip install -r requirements.txt
+# =============================================================================
+
+# --- Django core ---
+Django>=4.2,<5.0
+asgiref>=3.7.0
+
+# --- Django REST Framework ---
+djangorestframework>=3.14.0
+django-filter>=23.5
+
+# --- Autenticación JWT ---
+djangorestframework-simplejwt>=5.3.0
+
+# --- CORS (frontend React) ---
+django-cors-headers>=4.3.0
+
+# --- Variables de entorno ---
+python-dotenv>=1.0.0
+
+# --- Validación de schemas (organizations) ---
+jsonschema>=4.20.0
+
+# --- Base de datos ---
+psycopg2-binary>=2.9.9          # PostgreSQL (producción)
+# SQLite viene incluido en Python (desarrollo)
+
+# --- Cache / Cola (Channels en producción) ---
+redis>=5.0.0
+
+# --- WebSockets / ASGI ---
+channels>=4.0.0
+channels-redis>=4.2.0           # Channel layer con Redis (prod)
+daphne>=4.0.0                   # Servidor ASGI (HTTP + WebSocket)
+# Dependencias transitivas de daphne/channels (se instalan solas):
+#   autobahn, Twisted, pyOpenSSL, pyasn1, attrs, etc.
+
+# --- Sanitización HTML (mensajería) ---
+bleach>=6.0.0
+
+# --- Pagos ---
+mercadopago>=2.2.0              # Checkout Pro — Mercado Pago
+
+# --- Servidor WSGI/HTTP (producción) ---
+gunicorn>=21.2.0
+
+# --- Static files (producción) ---
+whitenoise>=6.6.0              # Servir static files sin nginx
+
+# =============================================================================
+# Opcionales (no requeridos hoy, útiles en prod)
+# =============================================================================
+django-redis>=5.4.0           # (No necesario: Django 4.2 trae RedisCache nativo)
+Pillow>=10.0.0                # Procesamiento de imágenes (si se validan uploads con PIL)
+sentry-sdk>=1.40.0            # Monitoreo de errores (se activa si SENTRY_DSN está seteado)
+
+# =============================================================================
+# Requerimientos específicos para producción 
+dj-database-url==2.2.0
+whitenoise==6.12.0
