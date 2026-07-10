@@ -31,6 +31,11 @@ if not ALLOWED_HOSTS:
 
 # ── CORS / CSRF ─────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS")
+if not CORS_ALLOWED_ORIGINS:
+    raise RuntimeError(
+        "CORS_ALLOWED_ORIGINS es obligatorio en producción. "
+        "Ejemplo: CORS_ALLOWED_ORIGINS=https://missigdigital.site,https://https://missingdigitalback.onrender.com/"
+    )
 CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS") or CORS_ALLOWED_ORIGINS
 
 # ── Base de datos (PostgreSQL) ──────────────────────────────────────────────
@@ -43,7 +48,7 @@ if DATABASE_URL:
         "default": dj_database_url.config(
             default=DATABASE_URL,
             conn_max_age=int(os.getenv("DB_CONN_MAX_AGE", "600")),
-            ssl_require=True,
+            ssl_require=_env_bool("DB_SSL_REQUIRE", True),
         )
     }
 else:
@@ -109,7 +114,7 @@ DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@localhost")
 # ── Seguridad HTTPS ─────────────────────────────────────────────────────────
 # Detrás de un proxy/balanceador que hace TLS (nginx, traefik, load balancer):
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-SECURE_SSL_REDIRECT = _env_bool("SECURE_SSL_REDIRECT", True)
+SECURE_SSL_REDIRECT = _env_bool("SECURE_SSL_REDIRECT", False)
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000"))
