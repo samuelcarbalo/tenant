@@ -7,6 +7,7 @@ services:
     buildCommand: |
       pip install -r requirements.txt
       python manage.py collectstatic --noinput --clear
+      python manage.py migrate
     startCommand: daphne -b 0.0.0.0 -p $PORT config.asgi:application
     envVars:
       - key: DJANGO_SETTINGS_MODULE
