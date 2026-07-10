@@ -8,6 +8,7 @@ from .models import (
     Team,
     Match,
     Player,
+    PlayerSuspension,
 )
 
 
@@ -44,3 +45,10 @@ class TournamentPhaseAdmin(admin.ModelAdmin):
 class CompetitionGroupAdmin(admin.ModelAdmin):
     list_display = ("name", "phase", "max_teams")
     inlines = [GroupMembershipInline]
+
+
+@admin.register(PlayerSuspension)
+class PlayerSuspensionAdmin(admin.ModelAdmin):
+    list_display = ("player", "tournament", "reason", "matches_count", "is_active", "created_at")
+    list_filter = ("reason", "is_active", "tournament")
+    search_fields = ("player__first_name", "player__last_name", "notes")

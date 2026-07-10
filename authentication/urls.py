@@ -6,7 +6,8 @@ from .views import (
     LogoutView,
     UserMeView,
     PasswordChangeView,
-    verify_token
+    verify_token,
+    users_count,
 )
 from django.views.decorators.csrf import csrf_exempt
 
@@ -17,6 +18,7 @@ urlpatterns = [
     path('refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('verify/', verify_token, name='verify_token'),
+    path('users-count/', users_count, name='users_count'),
     
     # Registration
     path('register/', csrf_exempt(RegisterView.as_view()), name='register'),

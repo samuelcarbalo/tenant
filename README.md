@@ -19,15 +19,18 @@ cd D:\app_multi_tenant
 venv\Scripts\activate
 cd tenant
 python manage.py runserver --settings=config.settings.development
+python manage.py runserver --settings=config.settings.production
 
 
 pip install -r requirements.txt
 
 # Migraciones
 python manage.py migrate --settings=config.settings.development
+python manage.py migrate --settings=config.settings.production
 
 # Servidor HTTP
 python manage.py runserver --settings=config.settings.development
+python manage.py runserver --settings=config.settings.production
 
 # WebSockets (mensajería) — terminal aparte
 daphne -b 0.0.0.0 -p 8000 config.asgi:application
@@ -240,6 +243,9 @@ python scripts/smoke_test_api.py
 # Crear migraciones
 python manage.py makemigrations --settings=config.settings.development
 python manage.py migrate --settings=config.settings.development
+# produccion
+python manage.py makemigrations --settings=config.settings.production
+python manage.py migrate --settings=config.settings.production
 
 # Superusuario
 python manage.py createsuperuser --settings=config.settings.development

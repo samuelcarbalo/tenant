@@ -11,6 +11,7 @@ from rest_framework.authentication import SessionAuthentication
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.core.cache import cache
+from django.db.models import Q
 from .serializers import (
     CustomTokenObtainPairSerializer,
     UserRegistrationSerializer,
@@ -116,6 +117,18 @@ class RegisterView(generics.CreateAPIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def users_count(request):
+    """Devuelve el número total de usuarios registrados y activos."""
+    return Response(
+        {
+            "registered_users": User.objects.count(),
+            "active_users": User.objects.filter(is_active=True).count(),
+        }
+    )
 
 
 class LogoutView(generics.GenericAPIView):

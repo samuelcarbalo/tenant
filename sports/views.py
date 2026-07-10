@@ -20,6 +20,7 @@ from .models import (
     MatchPeriod,
     MatchInning,
     AdvertisementBanner,
+    PlayerSuspension,
 )
 from .serializers import (
     TournamentListSerializer,
@@ -47,6 +48,7 @@ from .serializers import (
     AssignTeamsToGroupSerializer,
     GenerateFixtureSerializer,
     AdvancePhaseSerializer,
+    PlayerSuspensionSerializer,
 )
 from .scoring import MatchResultService, StandingsService, get_scoring_config
 from .formats.templates import list_templates
@@ -759,12 +761,41 @@ class PlayerViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
-        """Asignar posted_by desde el usuario autenticado y tournament desde el team"""
+        """Asignar posted_by desde el usuario autenticado y crear usuario automático."""
         team = serializer.validated_data.get("team")
         tournament = serializer.validated_data.get("tournament")
-
         if not tournament and team:
             tournament = team.tournament
+
+        organization = None
+        if self.request.user.organization:
+            organization = self.request.user.organization
+        elif tournament:
+            organization = tournament.organization
+
+        email = (serializer.validated_data.get("email") or "").strip()
+        id_number = (serializer.validated_data.get("id_number") or "").strip()
+        if organization and email:
+            username = email.split("@", 1)[0]
+            existing_user = User.objects.filter(email__iexact=email, organization=organization).first()
+            if existing_user:
+                existing_user.first_name = serializer.validated_data.get("first_name") or existing_user.first_name
+                existing_user.last_name = serializer.validated_data.get("last_name") or existing_user.last_name
+                existing_user.username = username
+                existing_user.role = "user"
+                existing_user.is_active = True
+                existing_user.save(update_fields=["first_name", "last_name", "username", "role", "is_active"])
+            else:
+                User.objects.create_user(
+                    email=email,
+                    username=username,
+                    password=id_number or "123456",
+                    organization=organization,
+                    first_name=serializer.validated_data.get("first_name", ""),
+                    last_name=serializer.validated_data.get("last_name", ""),
+                    role="user",
+                    is_active=True,
+                )
 
         serializer.save(posted_by=self.request.user, tournament=tournament)
 
@@ -772,6 +803,68 @@ class PlayerViewSet(viewsets.ModelViewSet):
     def tournament_slug(self):
         """Obtiene el slug del torneo automáticamente"""
         return self.tournament.slug if self.tournament else None
+
+
+class PlayerSuspensionViewSet(viewsets.ModelViewSet):
+    """Gestión de suspensiones de jugadores."""
+
+    queryset = PlayerSuspension.objects.select_related(
+        "player", "tournament", "created_by", "revoked_by"
+    )
+    serializer_class = PlayerSuspensionSerializer
+
+    def get_permissions(self):
+        if self.action in ["list", "retrieve"]:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        queryset = self.queryset
+        tournament_id = self.request.query_params.get("tournament")
+        if tournament_id:
+            queryset = queryset.filter(tournament_id=tournament_id)
+        player_id = self.request.query_params.get("player")
+        if player_id:
+            queryset = queryset.filter(player_id=player_id)
+        if self.request.user.is_authenticated and not self.request.user.is_superuser and self.request.user.role not in {"admin", "manager"}:
+            queryset = queryset.filter(tournament__organization=self.request.user.organization)
+        return queryset.order_by("-created_at")
+
+    def _can_manage(self, request):
+        return request.user.is_superuser or request.user.role in {"admin", "manager"}
+
+    def create(self, request, *args, **kwargs):
+        if not self._can_manage(request):
+            return Response({"detail": "No tienes permiso para gestionar suspensiones."}, status=status.HTTP_403_FORBIDDEN)
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        if not self._can_manage(request):
+            return Response({"detail": "No tienes permiso para gestionar suspensiones."}, status=status.HTTP_403_FORBIDDEN)
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        if not self._can_manage(request):
+            return Response({"detail": "No tienes permiso para gestionar suspensiones."}, status=status.HTTP_403_FORBIDDEN)
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        if not self._can_manage(request):
+            return Response({"detail": "No tienes permiso para gestionar suspensiones."}, status=status.HTTP_403_FORBIDDEN)
+        return super().destroy(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        is_active = serializer.validated_data.get("is_active")
+        if is_active is False:
+            serializer.save(
+                revoked_by=self.request.user,
+                revoked_at=timezone.now(),
+            )
+        else:
+            serializer.save(revoked_by=None, revoked_at=None)
 
 
 class MatchViewSet(viewsets.ModelViewSet):
@@ -868,13 +961,83 @@ class MatchViewSet(viewsets.ModelViewSet):
         serializer = MatchEventSerializer(data=request.data)
         if serializer.is_valid():
             event = serializer.save(match=match, posted_by=request.user)
-            if event.player:
+            self._handle_player_card_event(event)
+            if event.player and event.event_type not in {"yellow_card", "red_card"}:
                 self._update_player_stats(event)
-            self._update_score_from_event(event)  # ← AGREGAR
+            self._update_score_from_event(event)
             return Response(
                 MatchEventSerializer(event).data, status=status.HTTP_201_CREATED
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def _handle_player_card_event(self, event):
+        """Convierte la segunda amarilla del mismo partido en roja y crea suspensión."""
+        if not event.player or event.event_type not in {"yellow_card", "red_card"}:
+            return
+
+        if event.event_type == "yellow_card":
+            previous_yellows = MatchEvent.objects.filter(
+                match=event.match,
+                player=event.player,
+                event_type="yellow_card",
+            ).exclude(id=event.id)
+            if previous_yellows.exists():
+                event.event_type = "red_card"
+                event.description = f"{event.description or ''} Roja automática por doble amarilla".strip()
+                event.save(update_fields=["event_type", "description"])
+                self._create_player_suspension(
+                    player=event.player,
+                    match=event.match,
+                    reason="double_yellow",
+                    notes="Sanción automática por doble amarilla en el mismo partido.",
+                    created_by=event.posted_by,
+                )
+                self._update_player_stats(event)
+                return
+
+            self._update_player_stats(event)
+            return
+
+        if event.event_type == "red_card":
+            self._create_player_suspension(
+                player=event.player,
+                match=event.match,
+                reason="direct_red",
+                notes="Sanción automática por tarjeta roja directa.",
+                created_by=event.posted_by,
+            )
+            self._update_player_stats(event)
+
+    def _create_player_suspension(self, player, match, reason, notes, created_by):
+        if not player or not match or not player.tournament:
+            return
+        existing = PlayerSuspension.objects.filter(
+            player=player,
+            tournament=player.tournament,
+            match=match,
+            reason=reason,
+            is_active=True,
+        ).exists()
+        if existing:
+            return
+
+        next_match = (
+            Match.objects.filter(tournament=player.tournament, match_date__gte=match.match_date)
+            .exclude(id=match.id)
+            .order_by("match_date", "id")
+            .first()
+        )
+        PlayerSuspension.objects.create(
+            player=player,
+            tournament=player.tournament,
+            match=match,
+            suspended_until_match=next_match,
+            reason=reason,
+            matches_count=1,
+            notes=notes,
+            created_by=created_by,
+            is_active=True,
+        )
 
     def _update_score_from_event(self, event):
         """Actualizar marcador automáticamente según el evento (solo fútbol).

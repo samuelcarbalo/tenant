@@ -6,6 +6,7 @@ from .views import (
     PlayerViewSet,
     MatchViewSet,
     AdvertisementBannerViewSet,
+    PlayerSuspensionViewSet,
 )
 
 router = DefaultRouter()
@@ -14,6 +15,7 @@ router.register(r"teams", TeamViewSet, basename="team")
 router.register(r"players", PlayerViewSet, basename="player")
 router.register(r"matches", MatchViewSet, basename="match")
 router.register(r"banners", AdvertisementBannerViewSet, basename="banners")
+router.register(r"player-suspensions", PlayerSuspensionViewSet, basename="player-suspension")
 urlpatterns = [
     path("", include(router.urls)),
 ]
