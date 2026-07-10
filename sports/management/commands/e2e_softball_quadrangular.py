@@ -109,7 +109,7 @@ class Command(BaseCommand):
         import urllib.request
         import json
 
-        base = "http://127.0.0.1:8000/api/v1"
+        base = "https://missingdigitalback.onrender.com/api/v1"
         for path in (
             f"/sports/tournaments/{slug}/structure/",
             f"/sports/tournaments/{slug}/bracket/?phase=final",
