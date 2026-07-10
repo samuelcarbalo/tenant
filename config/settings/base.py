@@ -15,19 +15,19 @@ AUTHENTICATION_BACKENDS = [
     "authentication.authentication.EmailOrganizationBackend",
     "django.contrib.auth.backends.ModelBackend",  # Fallback
 ]
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3001",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+
 
 CORS_ALLOW_HEADERS = [
-    "*",
-    "X-Tenant",
-    "Authorization",
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+    "x-tenant",
 ]
 # Resto del archivo...
 INSTALLED_APPS = [
@@ -71,7 +71,7 @@ MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
+    # "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.middleware.common.CommonMiddleware",
     # 'django.middleware.csrf.CsrfViewMiddleware',
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -80,6 +80,7 @@ MIDDLEWARE = [
     # Middleware personalizado para multi-tenant
     "core.middleware.OrganizationMiddleware",
 ]
+CORS_ALLOW_CREDENTIALS = True 
 
 ROOT_URLCONF = "config.urls"
 

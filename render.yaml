@@ -1,0 +1,65 @@
+services:
+  # ── API Django + Daphne ─────────────────────────────────────────────────
+  - type: web
+    name: tenant-api
+    runtime: python
+    plan: free
+    buildCommand: |
+      pip install -r requirements.txt
+      python manage.py collectstatic --noinput --clear
+    startCommand: daphne -b 0.0.0.0 -p $PORT config.asgi:application
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      - key: PYTHON_VERSION
+        value: 3.12
+      - key: SECRET_KEY
+        generateValue: true  # Render genera uno automático
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tenant-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: tenant-redis
+          property: connectionString
+      - key: ALLOWED_HOSTS
+        value: ${RENDER_EXTERNAL_HOSTNAME}  # Render inyecta su dominio automáticamente
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false  # Tú la defines manualmente en el dashboard
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: BACKEND_URL
+        sync: false
+      - key: MERCADOPAGO_PUBLIC_KEY
+        sync: false
+      - key: MERCADOPAGO_ACCESS_TOKEN
+        sync: false
+      - key: MERCADOPAGO_WEBHOOK_URL
+        sync: false
+      - key: EMAIL_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_PORT
+        value: 587
+      - key: EMAIL_USE_TLS
+        value: true
+      - key: SECURE_SSL_REDIRECT
+        value: false
+      - key: DB_SSL_REQUIRE
+        value: true
+
+  # ── Redis (para Channels + Cache) ───────────────────────────────────────
+  - type: redis
+    name: tenant-redis
+    plan: free
+    ipAllowList: []
+
+databases:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────
+  - name: tenant-db
+    plan: free
+    databaseName: tenant
+    user: tenant
