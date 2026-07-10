@@ -7,10 +7,12 @@ import os
 from channels.routing import ProtocolTypeRouter, URLRouter
 from django.core.asgi import get_asgi_application
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.development")
+# Usa la variable de entorno que le pases, no hardcodear 'development'
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
 
 django_asgi_app = get_asgi_application()
 
+# Importaciones post-setup (evitan AppRegistryNotReady)
 from messaging.middleware import JWTAuthMiddlewareStack  # noqa: E402
 from messaging.routing import websocket_urlpatterns  # noqa: E402
 

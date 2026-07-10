@@ -394,6 +394,77 @@ class Player(TimeStampedModel):
         return f"{self.first_name} {self.last_name}"
 
 
+class PlayerSuspension(TimeStampedModel):
+    """Suspensión de un jugador por una o más fechas o por una sanción automática."""
+
+    player = models.ForeignKey(
+        Player,
+        on_delete=models.CASCADE,
+        related_name="suspensions",
+    )
+    tournament = models.ForeignKey(
+        Tournament,
+        on_delete=models.CASCADE,
+        related_name="player_suspensions",
+    )
+    match = models.ForeignKey(
+        "Match",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="player_suspensions",
+    )
+    suspended_until_match = models.ForeignKey(
+        "Match",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="suspended_players",
+        help_text="Próximo partido programado que debe cumplir la sanción.",
+    )
+    reason = models.CharField(
+        max_length=30,
+        choices=[
+            ("direct_red", "Roja directa"),
+            ("double_yellow", "Doble amarilla"),
+            ("manual", "Manual"),
+        ],
+        default="manual",
+    )
+    matches_count = models.PositiveSmallIntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_player_suspensions",
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="revoked_player_suspensions",
+    )
+
+    class Meta:
+        db_table = "player_suspensions"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.player.full_name} - {self.get_reason_display()}"
+
+    def is_active_for_match(self, match):
+        if not self.is_active or not match:
+            return False
+        if self.suspended_until_match_id is None:
+            return True
+        return self.suspended_until_match_id == match.id
+
+
 class Match(TimeStampedModel):
     """
     Partido/Encuentro

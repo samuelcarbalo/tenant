@@ -14,7 +14,36 @@ from .models import (
     MatchEvent,
     MatchLineup,
     AdvertisementBanner,
+    PlayerSuspension,
 )
+
+
+class PlayerSuspensionSerializer(serializers.ModelSerializer):
+    player_name = serializers.CharField(source="player.full_name", read_only=True)
+    tournament_name = serializers.CharField(source="tournament.name", read_only=True)
+    created_by_name = serializers.CharField(source="created_by.full_name", read_only=True)
+
+    class Meta:
+        model = PlayerSuspension
+        fields = [
+            "id",
+            "player",
+            "player_name",
+            "tournament",
+            "tournament_name",
+            "match",
+            "suspended_until_match",
+            "reason",
+            "matches_count",
+            "is_active",
+            "notes",
+            "created_by",
+            "created_by_name",
+            "revoked_at",
+            "revoked_by",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class TournamentCreateSerializer(serializers.ModelSerializer):
