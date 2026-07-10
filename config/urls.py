@@ -16,11 +16,12 @@ def create_superuser_view(request):
         return JsonResponse({'status': 'already_exists'})
     
     User.objects.create_superuser(
-        email='carbalo087@gmail.com',
-        password='Vivayo123!',
-        first_name='Admin',
-        last_name='User'
-    )
+    username='admin',           # ← Agregar username
+    email='carbalo087@gmail.com',
+    password='TuPasswordSeguro123',
+    first_name='Admin',
+    last_name='User'
+)
     return JsonResponse({'status': 'created'})
 
 
