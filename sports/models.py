@@ -304,6 +304,14 @@ class Player(TimeStampedModel):
     nickname = models.CharField(max_length=100, blank=True)
     id_number = models.CharField(max_length=50, blank=True, verbose_name="Cédula")
     email = models.EmailField(blank=True, verbose_name="Correo electrónico")
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="player_profiles",
+        help_text="Usuario vinculado al registro automático del jugador.",
+    )
     posted_by = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -432,6 +440,10 @@ class PlayerSuspension(TimeStampedModel):
         default="manual",
     )
     matches_count = models.PositiveSmallIntegerField(default=1)
+    matches_served = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Partidos de sanción ya cumplidos.",
+    )
     is_active = models.BooleanField(default=True)
     notes = models.TextField(blank=True)
     created_by = models.ForeignKey(
@@ -458,11 +470,11 @@ class PlayerSuspension(TimeStampedModel):
         return f"{self.player.full_name} - {self.get_reason_display()}"
 
     def is_active_for_match(self, match):
+        from sports.services.suspensions import get_affected_match_ids
+
         if not self.is_active or not match:
             return False
-        if self.suspended_until_match_id is None:
-            return True
-        return self.suspended_until_match_id == match.id
+        return match.id in get_affected_match_ids(self)
 
 
 class Match(TimeStampedModel):
