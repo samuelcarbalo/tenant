@@ -22,6 +22,7 @@ class PlayerSuspensionSerializer(serializers.ModelSerializer):
     player_name = serializers.CharField(source="player.full_name", read_only=True)
     tournament_name = serializers.CharField(source="tournament.name", read_only=True)
     created_by_name = serializers.CharField(source="created_by.full_name", read_only=True)
+    matches_remaining = serializers.SerializerMethodField()
 
     class Meta:
         model = PlayerSuspension
@@ -35,6 +36,8 @@ class PlayerSuspensionSerializer(serializers.ModelSerializer):
             "suspended_until_match",
             "reason",
             "matches_count",
+            "matches_served",
+            "matches_remaining",
             "is_active",
             "notes",
             "created_by",
@@ -44,6 +47,24 @@ class PlayerSuspensionSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        read_only_fields = ["created_by", "revoked_at", "revoked_by", "matches_served"]
+
+    def get_matches_remaining(self, obj):
+        return max(0, obj.matches_count - obj.matches_served)
+
+    def validate(self, attrs):
+        player = attrs.get("player") or getattr(self.instance, "player", None)
+        tournament = attrs.get("tournament") or getattr(self.instance, "tournament", None)
+        if player and tournament and player.tournament_id != tournament.id:
+            raise serializers.ValidationError(
+                {"player": "El jugador no pertenece a este torneo."}
+            )
+        matches_count = attrs.get("matches_count")
+        if matches_count is not None and matches_count < 1:
+            raise serializers.ValidationError(
+                {"matches_count": "Debe ser al menos 1 partido."}
+            )
+        return attrs
 
 
 class TournamentCreateSerializer(serializers.ModelSerializer):
@@ -314,6 +335,7 @@ class PlayerCreateUpdateSerializer(serializers.ModelSerializer):
             "nickname",
             "id_number",
             "email",
+            "user",
             "jersey_number",
             "position",
             "tournament",
@@ -324,6 +346,16 @@ class PlayerCreateUpdateSerializer(serializers.ModelSerializer):
             "is_active",
             "posted_by",
         ]
+        read_only_fields = ["user"]
+
+    def validate(self, attrs):
+        email = (attrs.get("email") or getattr(self.instance, "email", "") or "").strip()
+        id_number = (attrs.get("id_number") or getattr(self.instance, "id_number", "") or "").strip()
+        if email and not id_number:
+            raise serializers.ValidationError(
+                {"id_number": "La cédula es obligatoria para crear la cuenta de usuario del jugador."}
+            )
+        return attrs
 
 
 class MatchEventSerializer(serializers.ModelSerializer):

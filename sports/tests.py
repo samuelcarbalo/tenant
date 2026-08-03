@@ -4,7 +4,11 @@ from django.utils import timezone
 
 from authentication.models import User
 from organizations.models import Organization
+from profiles.models import Profile
 from .models import Match, MatchEvent, Player, Team, Tournament, PlayerSuspension
+from .services.suspensions import is_player_suspended_for_match, process_suspensions_on_match_finish
+from .views import MatchViewSet, PlayerViewSet
+from rest_framework.test import APIRequestFactory
 
 
 class SportsSanctionsTests(TestCase):
@@ -90,3 +94,73 @@ class SportsSanctionsTests(TestCase):
         self.assertEqual(self.player.yellow_cards, 1)
         self.assertEqual(self.player.red_cards, 1)
         self.assertTrue(PlayerSuspension.objects.filter(player=self.player, tournament=self.tournament).exists())
+
+    def test_multi_match_manual_suspension_blocks_lineup(self):
+        away_team = Team.objects.create(
+            name="Away Team",
+            slug="away-team",
+            abbreviation="AT",
+            description="",
+            posted_by=self.user,
+            tournament=self.tournament,
+            organization=self.organization,
+        )
+        next_match = Match.objects.create(
+            tournament=self.tournament,
+            home_team=self.team,
+            away_team=away_team,
+            home_score=0,
+            away_score=0,
+            match_date=timezone.now().date() + timezone.timedelta(days=1),
+            posted_by=self.user,
+            venue="Test 2",
+        )
+        suspension = PlayerSuspension.objects.create(
+            player=self.player,
+            tournament=self.tournament,
+            match=self.match,
+            reason="manual",
+            matches_count=2,
+            matches_served=0,
+            notes="Sanción manual de prueba",
+            created_by=self.user,
+            is_active=True,
+            suspended_until_match=next_match,
+        )
+        self.assertTrue(is_player_suspended_for_match(self.player, next_match)[0])
+
+        next_match.status = "finished"
+        next_match.save(update_fields=["status"])
+        process_suspensions_on_match_finish(next_match)
+
+        suspension.refresh_from_db()
+        self.assertEqual(suspension.matches_served, 1)
+        self.assertTrue(suspension.is_active)
+
+    def test_player_create_auto_user_with_profile(self):
+        factory = APIRequestFactory()
+        request = factory.post("/api/v1/sports/players/")
+        request.user = self.user
+
+        view = PlayerViewSet()
+        view.request = request
+        from .serializers import PlayerCreateUpdateSerializer
+
+        serializer = PlayerCreateUpdateSerializer(data={
+            "first_name": "Pedro",
+            "last_name": "Lopez",
+            "email": "pedro@example.com",
+            "id_number": "99887766",
+            "team": str(self.team.id),
+            "tournament": str(self.tournament.id),
+            "position": "forward",
+        })
+        serializer.is_valid(raise_exception=True)
+        view.perform_create(serializer)
+
+        player = Player.objects.get(email="pedro@example.com")
+        self.assertIsNotNone(player.user)
+        self.assertTrue(
+            Profile.objects.filter(user=player.user, organization=self.organization).exists()
+        )
+        self.assertEqual(User.objects.filter(email="pedro@example.com").count(), 1)
