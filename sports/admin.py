@@ -49,6 +49,6 @@ class CompetitionGroupAdmin(admin.ModelAdmin):
 
 @admin.register(PlayerSuspension)
 class PlayerSuspensionAdmin(admin.ModelAdmin):
-    list_display = ("player", "tournament", "reason", "matches_count", "is_active", "created_at")
+    list_display = ("player", "tournament", "reason", "matches_count", "matches_served", "is_active", "created_at")
     list_filter = ("reason", "is_active", "tournament")
     search_fields = ("player__first_name", "player__last_name", "notes")

@@ -7,6 +7,12 @@ from django.db.models import Q, Count, Prefetch, F
 from django.utils import timezone
 from django.db import transaction
 from authentication.models import User
+from profiles.models import Profile
+from .services.suspensions import (
+    create_player_suspension,
+    is_player_suspended_for_match,
+    process_suspensions_on_match_finish,
+)
 from .models import (
     Tournament,
     TournamentPhase,
@@ -775,6 +781,7 @@ class PlayerViewSet(viewsets.ModelViewSet):
 
         email = (serializer.validated_data.get("email") or "").strip()
         id_number = (serializer.validated_data.get("id_number") or "").strip()
+        linked_user = None
         if organization and email:
             username = email.split("@", 1)[0]
             existing_user = User.objects.filter(email__iexact=email, organization=organization).first()
@@ -784,20 +791,32 @@ class PlayerViewSet(viewsets.ModelViewSet):
                 existing_user.username = username
                 existing_user.role = "user"
                 existing_user.is_active = True
-                existing_user.save(update_fields=["first_name", "last_name", "username", "role", "is_active"])
+                if id_number:
+                    existing_user.set_password(id_number)
+                existing_user.save()
+                linked_user = existing_user
             else:
-                User.objects.create_user(
+                linked_user = User.objects.create_user(
                     email=email,
                     username=username,
-                    password=id_number or "123456",
+                    password=id_number,
                     organization=organization,
                     first_name=serializer.validated_data.get("first_name", ""),
                     last_name=serializer.validated_data.get("last_name", ""),
                     role="user",
                     is_active=True,
                 )
+            Profile.objects.get_or_create(
+                user=linked_user,
+                organization=organization,
+                defaults={"dynamic_data": {}},
+            )
 
-        serializer.save(posted_by=self.request.user, tournament=tournament)
+        serializer.save(
+            posted_by=self.request.user,
+            tournament=tournament,
+            user=linked_user,
+        )
 
     @property
     def tournament_slug(self):
@@ -854,7 +873,14 @@ class PlayerSuspensionViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        suspension = serializer.save(created_by=self.request.user)
+        if suspension.match_id and not suspension.suspended_until_match_id:
+            from sports.services.suspensions import _team_matches_after_sanction
+
+            next_match = _team_matches_after_sanction(suspension).first()
+            if next_match:
+                suspension.suspended_until_match = next_match
+                suspension.save(update_fields=["suspended_until_match", "updated_at"])
 
     def perform_update(self, serializer):
         is_active = serializer.validated_data.get("is_active")
@@ -865,6 +891,21 @@ class PlayerSuspensionViewSet(viewsets.ModelViewSet):
             )
         else:
             serializer.save(revoked_by=None, revoked_at=None)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def revoke(self, request, pk=None):
+        """Revoca una suspensión activa (automática o manual)."""
+        if not self._can_manage(request):
+            return Response(
+                {"detail": "No tienes permiso para gestionar suspensiones."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        suspension = self.get_object()
+        suspension.is_active = False
+        suspension.revoked_by = request.user
+        suspension.revoked_at = timezone.now()
+        suspension.save(update_fields=["is_active", "revoked_by", "revoked_at", "updated_at"])
+        return Response(PlayerSuspensionSerializer(suspension).data)
 
 
 class MatchViewSet(viewsets.ModelViewSet):
@@ -949,6 +990,7 @@ class MatchViewSet(viewsets.ModelViewSet):
             match.finished_at = timezone.now()
             match.save(update_fields=["status", "finished_at"])
             MatchResultService.finalize_match(match, score_data)
+            process_suspensions_on_match_finish(match)
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -960,6 +1002,19 @@ class MatchViewSet(viewsets.ModelViewSet):
         match = self.get_object()
         serializer = MatchEventSerializer(data=request.data)
         if serializer.is_valid():
+            player = serializer.validated_data.get("player")
+            if player:
+                suspended, suspension = is_player_suspended_for_match(player, match)
+                if suspended:
+                    return Response(
+                        {
+                            "error": (
+                                f"El jugador está suspendido y no puede participar en este partido "
+                                f"({suspension.get_reason_display() if suspension else 'sanción activa'})."
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
             event = serializer.save(match=match, posted_by=request.user)
             self._handle_player_card_event(event)
             if event.player and event.event_type not in {"yellow_card", "red_card"}:
@@ -1008,35 +1063,14 @@ class MatchViewSet(viewsets.ModelViewSet):
             )
             self._update_player_stats(event)
 
-    def _create_player_suspension(self, player, match, reason, notes, created_by):
-        if not player or not match or not player.tournament:
-            return
-        existing = PlayerSuspension.objects.filter(
+    def _create_player_suspension(self, player, match, reason, notes, created_by, matches_count=1):
+        return create_player_suspension(
             player=player,
-            tournament=player.tournament,
             match=match,
             reason=reason,
-            is_active=True,
-        ).exists()
-        if existing:
-            return
-
-        next_match = (
-            Match.objects.filter(tournament=player.tournament, match_date__gte=match.match_date)
-            .exclude(id=match.id)
-            .order_by("match_date", "id")
-            .first()
-        )
-        PlayerSuspension.objects.create(
-            player=player,
-            tournament=player.tournament,
-            match=match,
-            suspended_until_match=next_match,
-            reason=reason,
-            matches_count=1,
             notes=notes,
             created_by=created_by,
-            is_active=True,
+            matches_count=matches_count,
         )
 
     def _update_score_from_event(self, event):
@@ -1279,6 +1313,31 @@ class MatchViewSet(viewsets.ModelViewSet):
         if not bulk_serializer.is_valid():
             return Response(
                 {"success": False, "error": bulk_serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        suspended_players = []
+        for player_data in players_data:
+            player_id = player_data.get("player")
+            if not player_id:
+                continue
+            try:
+                player = Player.objects.get(id=player_id)
+            except Player.DoesNotExist:
+                continue
+            suspended, _ = is_player_suspended_for_match(player, match)
+            if suspended and player_data.get("is_starter"):
+                suspended_players.append(player.full_name)
+
+        if suspended_players:
+            return Response(
+                {
+                    "success": False,
+                    "error": (
+                        "Jugadores suspendidos no pueden ser titulares: "
+                        + ", ".join(suspended_players)
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
