@@ -4,6 +4,7 @@ from django.db import transaction
 from django.db.models import F
 
 from authentication.models import User
+from notifications.services import notify_payment_success
 from payments.models import PaymentOrder, TransaccionFacturacion
 from payments.packages import get_package
 from payments.services.billing import calculate_billing_breakdown
@@ -55,6 +56,17 @@ def apply_approved_payment(payment_order: PaymentOrder, mp_payment_id: str) -> b
         order.save(update_fields=["status", "mp_payment_id", "credits_applied", "updated_at"])
 
     check_withdrawal_alert()
+
+    try:
+        notify_payment_success(
+            user=user,
+            credits=order.credits_amount,
+            order_id=str(order.id),
+            mp_payment_id=mp_payment_id,
+        )
+    except Exception:
+        logger.exception("No se pudo crear notificación de pago para order=%s", order.id)
+
     logger.info(
         "Credits applied: user=%s credits=+%s order=%s",
         user.id,

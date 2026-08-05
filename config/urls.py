@@ -5,6 +5,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from organizations.views import OrganizationViewSet
 from rest_framework.routers import DefaultRouter
+from payments.views import mercadopago_webhook
 
 
 @api_view(["GET"])
@@ -36,6 +37,8 @@ urlpatterns = [
     path("api/v1/messaging/", include("messaging.urls")),
     path("api/v1/notifications/", include("notifications.urls")),
     path("api/v1/payments/", include("payments.urls")),
+    # Alias amigable para webhooks MP (mismo handler que /api/v1/payments/webhook/)
+    path("api/webhooks/mercadopago/", mercadopago_webhook, name="mp-webhook-alias"),
     path("api/v1/moderation/", include("moderation.urls")),
     path("api/v1/advertising/", include("advertising.urls")),
     path("api/v1/events/", include("events.urls")),
