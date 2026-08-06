@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlparse
 
 import mercadopago
 from django.conf import settings
@@ -6,6 +7,39 @@ from django.conf import settings
 from payments.packages import get_package
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_public_origin(url: str) -> str:
+    """
+    Normaliza a origin https://host (sin path/query).
+    MP rechaza HTTP y URLs mal formadas en back_urls / notification_url.
+    """
+    raw = (url or "").strip().strip("'\"")
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    parsed = urlparse(raw)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return ""
+    # Quita paths accidentales (ej. https://sitio.com/login)
+    return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
+
+def _require_https_origin(url: str, *, setting_name: str) -> str:
+    origin = _normalize_public_origin(url)
+    if not origin.startswith("https://"):
+        raise ValueError(
+            f"{setting_name} debe ser una URL HTTPS pública "
+            f"(ej. https://capisjdigital.site). Valor actual: {url!r}"
+        )
+    host = urlparse(origin).hostname or ""
+    if host in ("localhost", "127.0.0.1", "0.0.0.0"):
+        raise ValueError(
+            f"{setting_name} no puede ser localhost: Mercado Pago exige HTTPS "
+            f"con dominio público en back_urls. Valor actual: {url!r}"
+        )
+    return origin
 
 
 class MercadoPagoService:
@@ -29,10 +63,18 @@ class MercadoPagoService:
         if not package:
             raise ValueError(f"Paquete desconocido: {package_id}")
 
-        frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000").rstrip("/")
-        webhook_url = getattr(settings, "MERCADOPAGO_WEBHOOK_URL", "")
+        frontend_url = _require_https_origin(
+            getattr(settings, "FRONTEND_URL", ""),
+            setting_name="FRONTEND_URL",
+        )
+        webhook_url = (getattr(settings, "MERCADOPAGO_WEBHOOK_URL", "") or "").strip().rstrip("/")
         if not webhook_url:
-            webhook_url = f"{getattr(settings, 'BACKEND_URL', 'http://localhost:8000')}/api/v1/payments/webhook/"
+            backend = _normalize_public_origin(getattr(settings, "BACKEND_URL", ""))
+            if backend.startswith("https://"):
+                webhook_url = f"{backend}/api/v1/payments/webhook/"
+        if webhook_url and not webhook_url.startswith("https://"):
+            logger.warning("MERCADOPAGO_WEBHOOK_URL no es HTTPS; se omite notification_url")
+            webhook_url = ""
 
         back_urls = {
             "success": f"{frontend_url}/creditos/resultado?status=success",
@@ -53,6 +95,7 @@ class MercadoPagoService:
             ],
             "payer": {"email": user_email},
             "back_urls": back_urls,
+            "auto_return": "approved",
             "external_reference": str(order_id),
             "metadata": {
                 "user_id": str(user_id),
@@ -62,11 +105,6 @@ class MercadoPagoService:
             },
         }
 
-        # auto_return exige back_urls HTTPS; en localhost omitirlo
-        if frontend_url.startswith("https://"):
-            preference_data["auto_return"] = "approved"
-
-        # Webhook solo útil con URL pública (ngrok/producción)
         if webhook_url.startswith("https://"):
             preference_data["notification_url"] = webhook_url
 
@@ -74,8 +112,14 @@ class MercadoPagoService:
         response = result.get("response", {})
 
         if result.get("status") not in (200, 201):
-            logger.error("MP preference error: %s", result)
-            raise RuntimeError(response.get("message", "Error al crear preferencia en Mercado Pago"))
+            logger.error(
+                "MP preference error: %s | back_urls=%s notification_url=%s",
+                result,
+                back_urls,
+                preference_data.get("notification_url"),
+            )
+            message = response.get("message") or response.get("error") or "Error al crear preferencia en Mercado Pago"
+            raise RuntimeError(message)
 
         return {
             "preference_id": response.get("id"),

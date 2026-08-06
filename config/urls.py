@@ -3,26 +3,7 @@ from django.urls import path, include
 from django.conf import settings
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from organizations.views import OrganizationViewSet
-from rest_framework.routers import DefaultRouter
-# urls.py - AGREGAR TEMPORALMENTE
-from django.http import JsonResponse
-from django.contrib.auth import get_user_model
-
-User = get_user_model()
-
-def create_superuser_view(request):
-    if User.objects.filter(email='carbalo087@gmail.com').exists():
-        return JsonResponse({'status': 'already_exists'})
-    
-    User.objects.create_superuser(
-    username='admin',           # ← Agregar username
-    email='carbalo087@gmail.com',
-    password='TuPasswordSeguro123',
-    first_name='Admin',
-    last_name='User'
-)
-    return JsonResponse({'status': 'created'})
+from payments.views import mercadopago_webhook
 
 
 @api_view(["GET"])
@@ -40,7 +21,6 @@ def api_root(request):
     )
 
 
-# Al inicio de config/urls.py
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/v1/auth/", include("authentication.urls")),
@@ -54,11 +34,12 @@ urlpatterns = [
     path("api/v1/messaging/", include("messaging.urls")),
     path("api/v1/notifications/", include("notifications.urls")),
     path("api/v1/payments/", include("payments.urls")),
+    # Alias amigable para webhooks MP (mismo handler que /api/v1/payments/webhook/)
+    path("api/webhooks/mercadopago/", mercadopago_webhook, name="mp-webhook-alias"),
     path("api/v1/moderation/", include("moderation.urls")),
     path("api/v1/advertising/", include("advertising.urls")),
     path("api/v1/events/", include("events.urls")),
     path("api/v1/contact/", include("contact.urls")),
-    path('__create_superuser/', create_superuser_view),
 ]
 if settings.DEBUG:
     from django.conf.urls.static import static

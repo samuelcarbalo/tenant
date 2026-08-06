@@ -200,6 +200,14 @@ MEDIA_ROOT = BASE_DIR / "media"
 MERCADOPAGO_PUBLIC_KEY = os.getenv("MERCADOPAGO_PUBLIC_KEY", "")
 MERCADOPAGO_ACCESS_TOKEN = os.getenv("MERCADOPAGO_ACCESS_TOKEN", "")
 MERCADOPAGO_WEBHOOK_URL = os.getenv("MERCADOPAGO_WEBHOOK_URL", "")
+# Secreto de firma de webhooks (panel MP → Webhooks → Secret key)
+MERCADOPAGO_WEBHOOK_SECRET = os.getenv("MERCADOPAGO_WEBHOOK_SECRET", "")
+# Si es "true"/"false" fuerza validación; por defecto se exige fuera de DEBUG
+_mp_enforce = os.getenv("MERCADOPAGO_WEBHOOK_ENFORCE_SIGNATURE")
+if _mp_enforce is None:
+    MERCADOPAGO_WEBHOOK_ENFORCE_SIGNATURE = None
+else:
+    MERCADOPAGO_WEBHOOK_ENFORCE_SIGNATURE = _mp_enforce.strip().lower() in ("1", "true", "yes")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 

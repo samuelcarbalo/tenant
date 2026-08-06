@@ -8,6 +8,9 @@ from core.models import TimeStampedModel
 class NotificationType(models.TextChoices):
     CHAT_MESSAGE = "chat_message", "Mensaje de chat"
     JOB_STATUS_CHANGE = "job_status_change", "Cambio estado postulación"
+    PAYMENT_SUCCESS = "payment_success", "Pago aprobado"
+    PAYMENT_PENDING = "payment_pending", "Pago pendiente"
+    PAYMENT_FAILED = "payment_failed", "Pago fallido"
 
 
 class Notification(TimeStampedModel):

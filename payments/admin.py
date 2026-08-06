@@ -1,6 +1,11 @@
 from django.contrib import admin
 
-from payments.models import PaymentOrder, TransaccionFacturacion, WithdrawalAlert
+from payments.models import (
+    MercadoPagoWebhookEvent,
+    PaymentOrder,
+    TransaccionFacturacion,
+    WithdrawalAlert,
+)
 
 
 @admin.register(PaymentOrder)
@@ -33,3 +38,20 @@ class WithdrawalAlertAdmin(admin.ModelAdmin):
     list_display = ("id", "total_pending_cop", "days_since_last_withdrawal", "is_resolved", "created_at")
     list_filter = ("is_resolved",)
     readonly_fields = ("created_at",)
+
+
+@admin.register(MercadoPagoWebhookEvent)
+class MercadoPagoWebhookEventAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "topic",
+        "resource_id",
+        "payment_status",
+        "signature_valid",
+        "processed_ok",
+        "process_result",
+        "created_at",
+    )
+    list_filter = ("topic", "payment_status", "signature_valid", "processed_ok")
+    search_fields = ("resource_id", "request_id", "process_result")
+    readonly_fields = ("created_at", "payload")

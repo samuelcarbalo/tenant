@@ -28,14 +28,16 @@ services:
       - key: CSRF_TRUSTED_ORIGINS
         sync: false
       - key: FRONTEND_URL
-        sync: false
+        value: https://capisjdigital.site
       - key: BACKEND_URL
-        sync: false
+        value: https://missingdigitalback.onrender.com
       - key: MERCADOPAGO_PUBLIC_KEY
         sync: false
       - key: MERCADOPAGO_ACCESS_TOKEN
         sync: false
       - key: MERCADOPAGO_WEBHOOK_URL
+        sync: false
+      - key: MERCADOPAGO_WEBHOOK_SECRET
         sync: false
       - key: SECURE_SSL_REDIRECT
         value: false

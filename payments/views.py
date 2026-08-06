@@ -6,7 +6,8 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 
-from payments.models import PaymentOrder, TransaccionFacturacion
+from notifications.services import notify_payment_status
+from payments.models import MercadoPagoWebhookEvent, PaymentOrder, TransaccionFacturacion
 from payments.packages import CREDIT_PACKAGES, get_package
 from payments.serializers import (
     CreatePreferenceSerializer,
@@ -16,6 +17,11 @@ from payments.serializers import (
 )
 from payments.services.mercadopago_service import MercadoPagoService
 from payments.services.payment_processor import apply_approved_payment
+from payments.services.webhook_security import (
+    extract_data_id,
+    signature_from_request,
+    verify_mercadopago_signature,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,44 +105,152 @@ class PaymentViewSet(viewsets.ViewSet):
 @permission_classes([AllowAny])
 def mercadopago_webhook(request):
     """
-    Webhook de Mercado Pago para eventos de pago.
-    MP envía ?topic=payment&id=PAYMENT_ID o body JSON según configuración.
+    Webhook de Mercado Pago.
+
+    Flujo:
+      1) Validar firma x-signature / x-request-id
+      2) Persistir evento (auditoría)
+      3) Si topic/type = payment → GET /v1/payments/{id}
+      4) Si approved → acreditar créditos + notificación in-app
+      5) Responder 200 rápido (MP reintenta si falla)
     """
-    topic = request.query_params.get("topic") or request.data.get("type", "")
-    payment_id = request.query_params.get("id") or request.data.get("data", {}).get("id")
+    sig = signature_from_request(request)
+    data_id = sig["data_id"] or extract_data_id(request)
+    x_signature = sig["x_signature"]
+    x_request_id = sig["x_request_id"]
 
-    if request.data.get("action") == "payment.updated":
-        payment_id = request.data.get("data", {}).get("id")
+    topic = (
+        request.query_params.get("topic")
+        or request.query_params.get("type")
+        or (request.data.get("type") if isinstance(request.data, dict) else "")
+        or ""
+    )
+    action = request.data.get("action", "") if isinstance(request.data, dict) else ""
 
-    if topic not in ("payment", "") and not payment_id:
-        return Response({"status": "ignored"})
+    signature_ok = verify_mercadopago_signature(
+        x_signature=x_signature,
+        x_request_id=x_request_id,
+        data_id=str(data_id) if data_id else "",
+    )
+    if not signature_ok:
+        # 401 para firmas inválidas; MP no debe reintentar con secreto incorrecto
+        return Response({"detail": "invalid_signature"}, status=status.HTTP_401_UNAUTHORIZED)
 
-    if not payment_id:
+    live_mode = None
+    if isinstance(request.data, dict) and "live_mode" in request.data:
+        live_mode = bool(request.data.get("live_mode"))
+
+    event = MercadoPagoWebhookEvent.objects.create(
+        topic=str(topic or ""),
+        action=str(action or ""),
+        resource_id=str(data_id or ""),
+        request_id=str(x_request_id or ""),
+        signature_valid=True,
+        live_mode=live_mode,
+        payload={
+            "query": dict(request.query_params),
+            "body": request.data if isinstance(request.data, dict) else {},
+            "headers": {
+                "x-signature": x_signature,
+                "x-request-id": x_request_id,
+            },
+        },
+    )
+
+    # Solo procesamos pagos aquí; merchant_order se registra y se ignora con 200
+    is_payment = topic in ("payment", "payment.updated", "") or str(action).startswith("payment")
+    if not data_id:
+        event.process_result = "no_payment_id"
+        event.save(update_fields=["process_result"])
         return Response({"status": "no_payment_id"})
+
+    if topic and topic not in ("payment",) and not str(action).startswith("payment"):
+        event.process_result = "ignored_topic"
+        event.save(update_fields=["process_result"])
+        return Response({"status": "ignored", "topic": topic})
+
+    if not is_payment and topic not in ("", "payment"):
+        event.process_result = "ignored"
+        event.save(update_fields=["process_result"])
+        return Response({"status": "ignored"})
 
     try:
         mp = MercadoPagoService()
-        payment = mp.get_payment(str(payment_id))
+        payment = mp.get_payment(str(data_id))
     except Exception:
-        logger.exception("Webhook: failed to fetch payment %s", payment_id)
-        return Response({"status": "error"}, status=status.HTTP_200_OK)
+        logger.exception("Webhook: failed to fetch payment %s", data_id)
+        event.process_result = "fetch_error"
+        event.save(update_fields=["process_result"])
+        # 200 para evitar storm de reintentos ante fallos temporales de red
+        return Response({"status": "error_fetching_payment"})
 
-    if payment.get("status") != "approved":
-        return Response({"status": payment.get("status", "unknown")})
+    payment_status = payment.get("status", "")
+    event.payment_status = str(payment_status or "")
+    event.save(update_fields=["payment_status"])
 
     external_ref = payment.get("external_reference")
-    if not external_ref:
-        logger.warning("Webhook: payment %s without external_reference", payment_id)
-        return Response({"status": "no_reference"})
+    order = None
+    if external_ref:
+        try:
+            order = PaymentOrder.objects.select_related("user").get(id=external_ref)
+            event.payment_order = order
+            event.save(update_fields=["payment_order"])
+        except PaymentOrder.DoesNotExist:
+            logger.warning("Webhook: order not found %s", external_ref)
+            event.process_result = "order_not_found"
+            event.save(update_fields=["process_result"])
+            return Response({"status": "order_not_found"})
 
-    try:
-        order = PaymentOrder.objects.get(id=external_ref)
-    except PaymentOrder.DoesNotExist:
-        logger.warning("Webhook: order not found %s", external_ref)
-        return Response({"status": "order_not_found"})
+    if payment_status == "approved" and order:
+        applied = apply_approved_payment(order, str(data_id))
+        event.processed_ok = True
+        event.process_result = "approved" if applied else "already_applied"
+        event.save(update_fields=["processed_ok", "process_result"])
+        return Response({"status": event.process_result})
 
-    applied = apply_approved_payment(order, str(payment_id))
-    return Response({"status": "approved" if applied else "already_applied"})
+    # Estados no aprobados → actualizar orden + avisar al usuario (sin duplicar spam)
+    if order and payment_status:
+        if payment_status in ("rejected", "cancelled", "refunded") and order.status != payment_status:
+            order.status = payment_status if payment_status in dict(PaymentOrder.STATUS_CHOICES) else "rejected"
+            order.mp_payment_id = str(data_id)
+            order.save(update_fields=["status", "mp_payment_id", "updated_at"])
+            try:
+                notify_payment_status(
+                    user=order.user,
+                    status=payment_status,
+                    order_id=str(order.id),
+                    mp_payment_id=str(data_id),
+                    amount_cop=order.amount_cop,
+                    credits=order.credits_amount,
+                )
+            except Exception:
+                logger.exception("notify_payment_status failed for order=%s", order.id)
+        elif payment_status in ("pending", "in_process") and order.status == "pending":
+            # Una sola notificación pending por orden (evitar spam de webhooks)
+            from notifications.models import Notification, NotificationType
+
+            already = Notification.objects.filter(
+                user=order.user,
+                type=NotificationType.PAYMENT_PENDING,
+                extra_data__order_id=str(order.id),
+            ).exists()
+            if not already:
+                try:
+                    notify_payment_status(
+                        user=order.user,
+                        status=payment_status,
+                        order_id=str(order.id),
+                        mp_payment_id=str(data_id),
+                        amount_cop=order.amount_cop,
+                        credits=order.credits_amount,
+                    )
+                except Exception:
+                    logger.exception("notify pending failed order=%s", order.id)
+
+    event.processed_ok = True
+    event.process_result = payment_status or "unknown"
+    event.save(update_fields=["processed_ok", "process_result"])
+    return Response({"status": payment_status or "unknown"})
 
 
 @api_view(["GET"])
