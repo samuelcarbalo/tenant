@@ -220,6 +220,8 @@ def mercadopago_webhook(request):
                     status=payment_status,
                     order_id=str(order.id),
                     mp_payment_id=str(data_id),
+                    amount_cop=order.amount_cop,
+                    credits=order.credits_amount,
                 )
             except Exception:
                 logger.exception("notify_payment_status failed for order=%s", order.id)
@@ -239,6 +241,8 @@ def mercadopago_webhook(request):
                         status=payment_status,
                         order_id=str(order.id),
                         mp_payment_id=str(data_id),
+                        amount_cop=order.amount_cop,
+                        credits=order.credits_amount,
                     )
                 except Exception:
                     logger.exception("notify pending failed order=%s", order.id)

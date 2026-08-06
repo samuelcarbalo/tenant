@@ -63,6 +63,7 @@ def apply_approved_payment(payment_order: PaymentOrder, mp_payment_id: str) -> b
             credits=order.credits_amount,
             order_id=str(order.id),
             mp_payment_id=mp_payment_id,
+            amount_cop=order.amount_cop,
         )
     except Exception:
         logger.exception("No se pudo crear notificación de pago para order=%s", order.id)
