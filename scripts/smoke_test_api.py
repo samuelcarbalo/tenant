@@ -4,7 +4,7 @@ import sys
 import urllib.request
 import urllib.error
 
-BASE = "http://127.0.0.1:8000/api/v1"
+BASE = "https://missingdigitalback.onrender.com/api/v1"
 TENANT = "conectando-empleo"
 results = []
 

@@ -3,8 +3,6 @@ from django.urls import path, include
 from django.conf import settings
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from organizations.views import OrganizationViewSet
-from rest_framework.routers import DefaultRouter
 from payments.views import mercadopago_webhook
 
 
@@ -23,7 +21,6 @@ def api_root(request):
     )
 
 
-# Al inicio de config/urls.py
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/v1/auth/", include("authentication.urls")),
