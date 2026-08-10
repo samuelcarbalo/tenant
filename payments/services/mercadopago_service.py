@@ -127,6 +127,76 @@ class MercadoPagoService:
             "sandbox_init_point": response.get("sandbox_init_point"),
         }
 
+    def create_preference_from_items(
+        self,
+        *,
+        items: list[dict],
+        user_email: str,
+        user_id: str,
+        order_id: str,
+        order_type: str = "ecommerce",
+        back_path: str = "/tienda/resultado",
+        metadata: dict | None = None,
+    ) -> dict:
+        """Preferencia genérica (tienda u otros) reutilizando back_urls / webhook HTTPS."""
+        if not items:
+            raise ValueError("items vacío")
+
+        frontend_url = _require_https_origin(
+            getattr(settings, "FRONTEND_URL", ""),
+            setting_name="FRONTEND_URL",
+        )
+        webhook_url = (getattr(settings, "MERCADOPAGO_WEBHOOK_URL", "") or "").strip().rstrip("/")
+        if not webhook_url:
+            backend = _normalize_public_origin(getattr(settings, "BACKEND_URL", ""))
+            if backend.startswith("https://"):
+                webhook_url = f"{backend}/api/v1/payments/webhook/"
+        if webhook_url and not webhook_url.startswith("https://"):
+            webhook_url = ""
+
+        path = back_path if back_path.startswith("/") else f"/{back_path}"
+        back_urls = {
+            "success": f"{frontend_url}{path}?status=success",
+            "failure": f"{frontend_url}{path}?status=failure",
+            "pending": f"{frontend_url}{path}?status=pending",
+        }
+
+        meta = {
+            "user_id": str(user_id),
+            "order_id": str(order_id),
+            "order_type": order_type,
+        }
+        if metadata:
+            meta.update(metadata)
+
+        preference_data = {
+            "items": items,
+            "payer": {"email": user_email},
+            "back_urls": back_urls,
+            "auto_return": "approved",
+            "external_reference": str(order_id),
+            "metadata": meta,
+        }
+        if webhook_url.startswith("https://"):
+            preference_data["notification_url"] = webhook_url
+
+        result = self.sdk.preference().create(preference_data)
+        response = result.get("response", {})
+        if result.get("status") not in (200, 201):
+            logger.error("MP preference (items) error: %s", result)
+            message = (
+                response.get("message")
+                or response.get("error")
+                or "Error al crear preferencia en Mercado Pago"
+            )
+            raise RuntimeError(message)
+
+        return {
+            "preference_id": response.get("id"),
+            "init_point": response.get("init_point"),
+            "sandbox_init_point": response.get("sandbox_init_point"),
+        }
+
     def get_payment(self, payment_id: str) -> dict:
         result = self.sdk.payment().get(payment_id)
         if result.get("status") != 200:

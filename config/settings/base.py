@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "advertising",
     "events",
     "contact",
+    "ecommerce",
 ]
 CACHES = {
     "default": {
