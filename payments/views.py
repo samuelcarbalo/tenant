@@ -1,6 +1,7 @@
 import logging
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
@@ -190,21 +191,46 @@ def mercadopago_webhook(request):
 
     external_ref = payment.get("external_reference")
     order = None
+    shop_order = None
     if external_ref:
         try:
             order = PaymentOrder.objects.select_related("user").get(id=external_ref)
             event.payment_order = order
             event.save(update_fields=["payment_order"])
-        except PaymentOrder.DoesNotExist:
-            logger.warning("Webhook: order not found %s", external_ref)
-            event.process_result = "order_not_found"
-            event.save(update_fields=["process_result"])
-            return Response({"status": "order_not_found"})
+        except (PaymentOrder.DoesNotExist, ValueError, ValidationError):
+            try:
+                from ecommerce.models import ShopOrder
+                from ecommerce.services import fulfill_shop_order, mark_shop_order_failed
+
+                shop_order = ShopOrder.objects.select_related("buyer").get(id=external_ref)
+            except Exception:
+                logger.warning("Webhook: order not found %s", external_ref)
+                event.process_result = "order_not_found"
+                event.save(update_fields=["process_result"])
+                return Response({"status": "order_not_found"})
+
+    if payment_status == "approved" and shop_order:
+        from ecommerce.services import fulfill_shop_order
+
+        applied = fulfill_shop_order(shop_order, str(data_id))
+        event.processed_ok = True
+        event.process_result = "shop_approved" if applied else "shop_already_applied"
+        event.save(update_fields=["processed_ok", "process_result"])
+        return Response({"status": event.process_result})
 
     if payment_status == "approved" and order:
         applied = apply_approved_payment(order, str(data_id))
         event.processed_ok = True
         event.process_result = "approved" if applied else "already_applied"
+        event.save(update_fields=["processed_ok", "process_result"])
+        return Response({"status": event.process_result})
+
+    if shop_order and payment_status in ("rejected", "cancelled", "refunded"):
+        from ecommerce.services import mark_shop_order_failed
+
+        mark_shop_order_failed(shop_order, payment_status, str(data_id))
+        event.processed_ok = True
+        event.process_result = f"shop_{payment_status}"
         event.save(update_fields=["processed_ok", "process_result"])
         return Response({"status": event.process_result})
 
