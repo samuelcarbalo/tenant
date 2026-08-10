@@ -5,7 +5,7 @@ from django.db.models import Prefetch
 from django_filters import rest_framework as filters
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 
 from ecommerce.models import Category, Discount, Product, ShopOrder, ShopOrderItem
@@ -30,6 +30,29 @@ from payments.services.mercadopago_service import MercadoPagoService
 logger = logging.getLogger(__name__)
 
 
+class PublicReadManagerWrite(IsManagerOrReadOnly):
+    """Lectura pública; escritura solo managers autenticados."""
+
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and getattr(request.user, "role", None) == "manager"
+        )
+
+
+def _request_org(request):
+    org = getattr(request, "current_organization", None)
+    if org:
+        return org
+    user = getattr(request, "user", None)
+    if user is not None and getattr(user, "is_authenticated", False):
+        return getattr(user, "organization", None)
+    return None
+
+
 class ProductFilter(filters.FilterSet):
     category = filters.CharFilter(field_name="category__slug")
     min_price = filters.NumberFilter(field_name="price_cop", lookup_expr="gte")
@@ -49,16 +72,14 @@ class ProductFilter(filters.FilterSet):
 
 class CategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
-    permission_classes = [IsManagerOrReadOnly, IsManagerOfOrganization]
+    permission_classes = [PublicReadManagerWrite, IsManagerOfOrganization]
     lookup_field = "slug"
     search_fields = ["name", "description"]
     ordering_fields = ["sort_order", "name", "created_at"]
 
     def get_queryset(self):
         qs = Category.objects.select_related("organization")
-        org = getattr(self.request, "current_organization", None) or getattr(
-            self.request.user, "organization", None
-        )
+        org = _request_org(self.request)
         if org:
             qs = qs.filter(organization=org)
         if self.action in ("list", "retrieve"):
@@ -66,20 +87,24 @@ class CategoryViewSet(viewsets.ModelViewSet):
         return qs
 
     def list(self, request, *args, **kwargs):
-        org = getattr(request, "current_organization", None) or getattr(
-            request.user, "organization", None
-        )
+        org = _request_org(request)
         if org and request.method == "GET":
             key = categories_cache_key(str(org.id))
-            cached = cache.get(key)
+            try:
+                cached = cache.get(key)
+            except Exception:
+                logger.exception("Cache get falló para categorías")
+                cached = None
             if cached is not None:
                 return Response(cached)
             response = super().list(request, *args, **kwargs)
-            # Solo cachear página completa simple
-            if response.status_code == 200 and isinstance(response.data, dict) and "results" in response.data:
-                cache.set(key, response.data, 300)
-            elif response.status_code == 200 and isinstance(response.data, list):
-                cache.set(key, response.data, 300)
+            try:
+                if response.status_code == 200 and isinstance(response.data, dict) and "results" in response.data:
+                    cache.set(key, response.data, 300)
+                elif response.status_code == 200 and isinstance(response.data, list):
+                    cache.set(key, response.data, 300)
+            except Exception:
+                logger.exception("Cache set falló para categorías")
             return response
         return super().list(request, *args, **kwargs)
 
@@ -99,7 +124,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
 
 class ProductViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsManagerOrReadOnly, IsManagerOfOrganization]
+    permission_classes = [PublicReadManagerWrite, IsManagerOfOrganization]
     lookup_field = "slug"
     filterset_class = ProductFilter
     search_fields = ["name", "description", "short_description", "sku"]
@@ -114,15 +139,13 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Product.objects.select_related("category", "organization")
-        org = getattr(self.request, "current_organization", None) or getattr(
-            getattr(self.request, "user", None), "organization", None
-        )
+        org = _request_org(self.request)
         if org:
             qs = qs.filter(organization=org)
         if self.action in ("list", "retrieve"):
             user = self.request.user
             is_manager = (
-                user.is_authenticated
+                getattr(user, "is_authenticated", False)
                 and getattr(user, "role", None) == "manager"
                 and getattr(user, "organization_id", None) == getattr(org, "id", None)
             )
@@ -131,16 +154,23 @@ class ProductViewSet(viewsets.ModelViewSet):
         return qs
 
     def retrieve(self, request, *args, **kwargs):
-        org = getattr(request, "current_organization", None)
+        org = _request_org(request)
         slug = kwargs.get("slug")
         if org and slug:
             key = product_detail_cache_key(str(org.id), slug)
-            cached = cache.get(key)
+            try:
+                cached = cache.get(key)
+            except Exception:
+                logger.exception("Cache get falló para producto")
+                cached = None
             if cached is not None:
                 return Response(cached)
             response = super().retrieve(request, *args, **kwargs)
-            if response.status_code == 200:
-                cache.set(key, response.data, 120)
+            try:
+                if response.status_code == 200:
+                    cache.set(key, response.data, 120)
+            except Exception:
+                logger.exception("Cache set falló para producto")
             return response
         return super().retrieve(request, *args, **kwargs)
 
