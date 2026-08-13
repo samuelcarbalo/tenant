@@ -1,6 +1,8 @@
 import logging
 
 from django.core.cache import cache
+from django.core.exceptions import FieldError
+from django.db import DatabaseError
 from django.db.models import Prefetch
 from django_filters import rest_framework as filters
 from rest_framework import status, viewsets
@@ -28,6 +30,29 @@ from jobs.permissions import IsManagerOfOrganization, IsManagerOrReadOnly
 from payments.services.mercadopago_service import MercadoPagoService
 
 logger = logging.getLogger(__name__)
+
+
+def _catalog_unavailable(exc):
+    """JSON 503 cuando fallan tablas, columnas u ordenación del catálogo."""
+    logger.exception("Ecommerce catalog failed: %s", exc)
+    return Response(
+        {
+            "success": False,
+            "error": [
+                {
+                    "field": "catalog",
+                    "message": (
+                        "El catálogo no está disponible temporalmente. "
+                        "Verifica que las migraciones de ecommerce estén aplicadas."
+                    ),
+                }
+            ],
+            "count": 0,
+            "results": [],
+            "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+        },
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
 
 
 class PublicReadManagerWrite(IsManagerOrReadOnly):
@@ -76,6 +101,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
     lookup_field = "slug"
     search_fields = ["name", "description"]
     ordering_fields = ["sort_order", "name", "created_at"]
+    ordering = ["sort_order", "name"]
 
     def get_queryset(self):
         qs = Category.objects.select_related("organization")
@@ -87,26 +113,29 @@ class CategoryViewSet(viewsets.ModelViewSet):
         return qs
 
     def list(self, request, *args, **kwargs):
-        org = _request_org(request)
-        if org and request.method == "GET":
-            key = categories_cache_key(str(org.id))
-            try:
-                cached = cache.get(key)
-            except Exception:
-                logger.exception("Cache get falló para categorías")
-                cached = None
-            if cached is not None:
-                return Response(cached)
-            response = super().list(request, *args, **kwargs)
-            try:
-                if response.status_code == 200 and isinstance(response.data, dict) and "results" in response.data:
-                    cache.set(key, response.data, 300)
-                elif response.status_code == 200 and isinstance(response.data, list):
-                    cache.set(key, response.data, 300)
-            except Exception:
-                logger.exception("Cache set falló para categorías")
-            return response
-        return super().list(request, *args, **kwargs)
+        try:
+            org = _request_org(request)
+            if org and request.method == "GET":
+                key = categories_cache_key(str(org.id))
+                try:
+                    cached = cache.get(key)
+                except Exception:
+                    logger.exception("Cache get falló para categorías")
+                    cached = None
+                if cached is not None:
+                    return Response(cached)
+                response = super().list(request, *args, **kwargs)
+                try:
+                    if response.status_code == 200 and isinstance(response.data, dict) and "results" in response.data:
+                        cache.set(key, response.data, 300)
+                    elif response.status_code == 200 and isinstance(response.data, list):
+                        cache.set(key, response.data, 300)
+                except Exception:
+                    logger.exception("Cache set falló para categorías")
+                return response
+            return super().list(request, *args, **kwargs)
+        except (DatabaseError, FieldError) as exc:
+            return _catalog_unavailable(exc)
 
     def perform_create(self, serializer):
         org = self.request.user.organization
@@ -128,7 +157,8 @@ class ProductViewSet(viewsets.ModelViewSet):
     lookup_field = "slug"
     filterset_class = ProductFilter
     search_fields = ["name", "description", "short_description", "sku"]
-    ordering_fields = ["price_cop", "created_at", "name", "stock"]
+    ordering_fields = ["price_cop", "created_at", "name", "stock", "is_featured"]
+    ordering = ["-is_featured", "-created_at"]
 
     def get_serializer_class(self):
         if self.action in ("create", "update", "partial_update"):
@@ -153,26 +183,35 @@ class ProductViewSet(viewsets.ModelViewSet):
                 qs = qs.filter(is_published=True, is_active=True)
         return qs
 
+    def list(self, request, *args, **kwargs):
+        try:
+            return super().list(request, *args, **kwargs)
+        except (DatabaseError, FieldError) as exc:
+            return _catalog_unavailable(exc)
+
     def retrieve(self, request, *args, **kwargs):
-        org = _request_org(request)
-        slug = kwargs.get("slug")
-        if org and slug:
-            key = product_detail_cache_key(str(org.id), slug)
-            try:
-                cached = cache.get(key)
-            except Exception:
-                logger.exception("Cache get falló para producto")
-                cached = None
-            if cached is not None:
-                return Response(cached)
-            response = super().retrieve(request, *args, **kwargs)
-            try:
-                if response.status_code == 200:
-                    cache.set(key, response.data, 120)
-            except Exception:
-                logger.exception("Cache set falló para producto")
-            return response
-        return super().retrieve(request, *args, **kwargs)
+        try:
+            org = _request_org(request)
+            slug = kwargs.get("slug")
+            if org and slug:
+                key = product_detail_cache_key(str(org.id), slug)
+                try:
+                    cached = cache.get(key)
+                except Exception:
+                    logger.exception("Cache get falló para producto")
+                    cached = None
+                if cached is not None:
+                    return Response(cached)
+                response = super().retrieve(request, *args, **kwargs)
+                try:
+                    if response.status_code == 200:
+                        cache.set(key, response.data, 120)
+                except Exception:
+                    logger.exception("Cache set falló para producto")
+                return response
+            return super().retrieve(request, *args, **kwargs)
+        except (DatabaseError, FieldError) as exc:
+            return _catalog_unavailable(exc)
 
     def perform_create(self, serializer):
         org = self.request.user.organization
