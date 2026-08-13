@@ -100,15 +100,16 @@ class TournamentSponsorshipViewSet(viewsets.ReadOnlyModelViewSet):
 
         with transaction.atomic():
             fresh_user = User.objects.select_for_update().get(id=user.id)
-            if fresh_user.credits < plan["credits"]:
-                raise ValidationError(
-                    {
-                        "detail": (
-                            f"Necesitas {plan['credits']} créditos para el plan "
-                            f"{plan['label']}. Tienes {fresh_user.credits}."
-                        )
-                    }
-                )
+            from authentication.credits import charge_credits
+
+            user.credits = charge_credits(
+                fresh_user,
+                plan["credits"],
+                (
+                    f"Necesitas {plan['credits']} créditos para el plan "
+                    f"{plan['label']}. Tienes {fresh_user.credits}."
+                ),
+            )
 
             try:
                 sponsorship = create_tournament_sponsorship(
@@ -122,10 +123,6 @@ class TournamentSponsorshipViewSet(viewsets.ReadOnlyModelViewSet):
                 )
             except ValueError as exc:
                 raise ValidationError({"detail": str(exc)}) from exc
-
-            fresh_user.credits -= plan["credits"]
-            fresh_user.save(update_fields=["credits"])
-            user.credits = fresh_user.credits
 
         out = TournamentSponsorshipSerializer(sponsorship).data
         out["credits_remaining"] = user.credits
@@ -177,15 +174,13 @@ class ClassifiedAdCampaignViewSet(viewsets.ReadOnlyModelViewSet):
 
         with transaction.atomic():
             fresh_user = User.objects.select_for_update().get(id=user.id)
-            if fresh_user.credits < plan["credits"]:
-                raise ValidationError(
-                    {
-                        "detail": (
-                            f"Necesitas {plan['credits']} créditos. "
-                            f"Tienes {fresh_user.credits}."
-                        )
-                    }
-                )
+            from authentication.credits import charge_credits
+
+            user.credits = charge_credits(
+                fresh_user,
+                plan["credits"],
+                f"Necesitas {plan['credits']} créditos. Tienes {fresh_user.credits}.",
+            )
 
             try:
                 campaign = create_classified_campaign(
@@ -201,10 +196,6 @@ class ClassifiedAdCampaignViewSet(viewsets.ReadOnlyModelViewSet):
                 )
             except ValueError as exc:
                 raise ValidationError({"detail": str(exc)}) from exc
-
-            fresh_user.credits -= plan["credits"]
-            fresh_user.save(update_fields=["credits"])
-            user.credits = fresh_user.credits
 
         out = ClassifiedAdCampaignSerializer(campaign).data
         out["credits_remaining"] = user.credits

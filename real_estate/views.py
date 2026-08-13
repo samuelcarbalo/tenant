@@ -99,17 +99,13 @@ class RealEstateOfferViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             # Bloquear la fila del usuario para evitar condiciones de carrera (Race Condition)
             fresh_user = User.objects.select_for_update().get(id=user.id)
-            if fresh_user.credits < 5:
-                raise ValidationError(
-                    {
-                        "detail": f"Créditos insuficientes. Cuesta 5 créditos publicar y tienes {fresh_user.credits}."
-                    }
-                )
+            from authentication.credits import charge_credits
 
-            # Descontar créditos
-            fresh_user.credits -= 5
-            fresh_user.save(update_fields=["credits"])
-            user.credits = fresh_user.credits  # Actualizar en sesión local
+            user.credits = charge_credits(
+                fresh_user,
+                5,
+                f"Créditos insuficientes. Cuesta 5 créditos publicar y tienes {fresh_user.credits}.",
+            )
 
             # Guardar el registro de bienes raíces
             serializer.save(

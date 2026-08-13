@@ -51,5 +51,9 @@ def resolve_login_user(email: str, password: str, organization_slug: str | None 
     org_slug = (organization_slug or "").strip()
 
     if org_slug:
-        return authenticate_tenant_user(email, password, org_slug)
+        tenant_user = authenticate_tenant_user(email, password, org_slug)
+        if tenant_user:
+            return tenant_user
+        # El login de la PWA siempre envía el slug del tenant; permitir superusuario de plataforma
+        return authenticate_platform_user(email, password)
     return authenticate_platform_user(email, password)

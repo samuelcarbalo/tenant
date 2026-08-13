@@ -57,6 +57,10 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         help_text="Nombre de la empresa si el usuario es tipo empresa",
     )
     credits = models.PositiveIntegerField(default=0)
+    is_unlimited_credits = models.BooleanField(
+        default=False,
+        help_text="Si es True, el usuario no consume créditos al publicar.",
+    )
     # Opcional: campo para distinguir tipo de usuario
     USER_TYPE_CHOICES = [
         ("person", "Persona"),
@@ -138,6 +142,20 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
     def get_username(self):
         return self.username  # Mostrar el username legible, no el identifier
+
+    @property
+    def has_unlimited_credits(self) -> bool:
+        return bool(self.is_unlimited_credits or self.is_superuser)
+
+    def spend_credits(self, amount: int) -> bool:
+        """Descuenta créditos. True si se cobró o es ilimitado; False si no alcanza."""
+        if amount <= 0 or self.has_unlimited_credits:
+            return True
+        if self.credits < amount:
+            return False
+        self.credits -= amount
+        self.save(update_fields=["credits"])
+        return True
 
 
 class LoginAttempt(TimeStampedModel):

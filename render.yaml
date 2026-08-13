@@ -6,7 +6,7 @@ services:
     buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput --clear && python manage.py migrate --noinput"
     # También en pre-deploy por si el build no tiene DB (Blueprint)
     preDeployCommand: "python manage.py migrate --noinput"
-    startCommand: "daphne -b 0.0.0.0 -p $PORT config.asgi:application"
+    startCommand: "python manage.py migrate --noinput && python manage.py seed_superuser && daphne -b 0.0.0.0 -p $PORT config.asgi:application"
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production

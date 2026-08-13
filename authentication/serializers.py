@@ -230,6 +230,8 @@ class UserSerializer(serializers.ModelSerializer):
             "organization_name",
             "is_active",
             "is_superuser",
+            "is_staff",
+            "is_unlimited_credits",
             "email_verified",
             "date_joined",
             "last_login",
@@ -237,7 +239,7 @@ class UserSerializer(serializers.ModelSerializer):
             "credits",
             "user_type",
         ]
-        read_only_fields = ["id", "email", "organization", "date_joined", "is_superuser"]
+        read_only_fields = ["id", "email", "organization", "date_joined", "is_superuser", "is_staff"]
 
 
 class PasswordChangeSerializer(serializers.Serializer):  # Cambia a Serializer

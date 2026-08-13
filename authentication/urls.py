@@ -19,10 +19,10 @@ urlpatterns = [
     path('logout/', LogoutView.as_view(), name='logout'),
     path('verify/', verify_token, name='verify_token'),
     path('users-count/', users_count, name='users_count'),
-    
+
     # Registration
     path('register/', csrf_exempt(RegisterView.as_view()), name='register'),
-    
+
     # User Management
     path('me/', UserMeView.as_view(), name='user_me'),
     path('password/change/', PasswordChangeView.as_view(), name='password_change'),

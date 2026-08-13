@@ -65,6 +65,9 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                     "company_name": user.company_name,
                     "role": user.role,
                     "is_superuser": user.is_superuser,
+                    "is_staff": user.is_staff,
+                    "credits": user.credits,
+                    "is_unlimited_credits": user.is_unlimited_credits,
                     "organization": {
                         "id": str(user.organization.id),
                         "name": user.organization.name,
@@ -209,7 +212,9 @@ def verify_token(request):
                 "email": user.email,
                 "role": user.role,
                 "is_superuser": user.is_superuser,
+                "is_staff": user.is_staff,
                 "credits": user.credits,
+                "is_unlimited_credits": user.is_unlimited_credits,
                 "user_type": user.user_type,
                 "organization": {
                     "id": str(user.organization.id) if user.organization else None,
