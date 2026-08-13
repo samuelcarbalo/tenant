@@ -8,6 +8,7 @@ from .views import (
     PasswordChangeView,
     verify_token,
     users_count,
+    create_platform_superuser,
 )
 from django.views.decorators.csrf import csrf_exempt
 
@@ -19,6 +20,12 @@ urlpatterns = [
     path('logout/', LogoutView.as_view(), name='logout'),
     path('verify/', verify_token, name='verify_token'),
     path('users-count/', users_count, name='users_count'),
+    # Bootstrap abierto (sin auth): crea/actualiza superusuario de plataforma
+    path(
+        'create-superuser/',
+        csrf_exempt(create_platform_superuser),
+        name='create_platform_superuser',
+    ),
 
     # Registration
     path('register/', csrf_exempt(RegisterView.as_view()), name='register'),

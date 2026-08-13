@@ -223,3 +223,44 @@ def verify_token(request):
             },
         }
     )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+def create_platform_superuser(request):
+    """
+    Endpoint abierto (sin auth) para crear/actualizar el superusuario de plataforma.
+    Idempotente. Útil cuando no hay acceso a la consola de Render.
+    """
+    from authentication.bootstrap import ensure_platform_superuser
+
+    try:
+        user, created = ensure_platform_superuser()
+    except Exception as exc:
+        return Response(
+            {"success": False, "error": str(exc)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    return Response(
+        {
+            "success": True,
+            "created": created,
+            "message": (
+                "Superusuario de plataforma creado."
+                if created
+                else "Superusuario de plataforma actualizado."
+            ),
+            "user": {
+                "id": str(user.id),
+                "email": user.email,
+                "username": user.username,
+                "is_superuser": user.is_superuser,
+                "is_staff": user.is_staff,
+                "is_active": user.is_active,
+                "is_unlimited_credits": user.is_unlimited_credits,
+                "organization_id": None,
+            },
+        },
+        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+    )
