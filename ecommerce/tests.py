@@ -144,10 +144,20 @@ class CatalogAPITests(EcommerceBaseTest):
             'relation "ecommerce_categories" does not exist'
         )
         res = self.anon.get(f"{API}/categories/")
-        self.assertEqual(res.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(res.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
         self.assertEqual(res.data.get("success"), False)
         self.assertEqual(res.data.get("results"), [])
-        self.assertTrue(isinstance(res.data.get("error"), list))
+        self.assertEqual(
+            res.data.get("error"),
+            "Las tablas de e-commerce no existen o no se han migrado.",
+        )
+        self.assertIn("ecommerce_categories", str(res.data.get("details")))
+
+    def test_catalog_health_endpoint(self):
+        res = self.anon.get(f"{API}/categories/health/")
+        self.assertIn(res.status_code, (status.HTTP_200_OK, status.HTTP_503_SERVICE_UNAVAILABLE))
+        self.assertIn("ok", res.data)
+        self.assertIn("missing_tables", res.data)
 
     def test_unpublished_hidden_from_public(self):
         self.product.is_published = False

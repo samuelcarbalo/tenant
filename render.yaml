@@ -3,10 +3,10 @@ services:
     name: tenant-api
     runtime: python
     plan: free
-    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput --clear && python manage.py migrate --noinput"
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput --clear && python manage.py migrate --noinput && python manage.py migrate ecommerce --noinput && python manage.py ensure_ecommerce_schema"
     # También en pre-deploy por si el build no tiene DB (Blueprint)
-    preDeployCommand: "python manage.py migrate --noinput"
-    startCommand: "python manage.py migrate --noinput && python manage.py migrate ecommerce --noinput && python manage.py seed_superuser && daphne -b 0.0.0.0 -p $PORT config.asgi:application"
+    preDeployCommand: "python manage.py migrate --noinput && python manage.py migrate ecommerce --noinput && python manage.py ensure_ecommerce_schema"
+    startCommand: "python manage.py migrate --noinput && python manage.py migrate ecommerce --noinput && python manage.py ensure_ecommerce_schema && python manage.py seed_superuser && daphne -b 0.0.0.0 -p $PORT config.asgi:application"
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production

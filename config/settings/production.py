@@ -9,6 +9,10 @@ import os
 import dj_database_url
 from .base import *  # noqa: F401,F403
 
+# Garantiza ecommerce en producción (hereda de base; refuerzo explícito).
+if "ecommerce" not in INSTALLED_APPS:  # noqa: F405
+    INSTALLED_APPS.append("ecommerce")  # noqa: F405
+
 
 def _env_list(name, default=""):
     raw = os.getenv(name, default)
