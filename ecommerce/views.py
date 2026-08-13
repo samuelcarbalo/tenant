@@ -1,13 +1,13 @@
 import logging
 
 from django.core.cache import cache
-from django.core.exceptions import FieldError
-from django.db import DatabaseError
+from django.http import Http404
 from django.db.models import Prefetch
 from django_filters import rest_framework as filters
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated, SAFE_METHODS
+from rest_framework.exceptions import APIException
+from rest_framework.permissions import AllowAny, IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 
 from ecommerce.models import Category, Discount, Product, ShopOrder, ShopOrderItem
@@ -32,27 +32,47 @@ from payments.services.mercadopago_service import MercadoPagoService
 logger = logging.getLogger(__name__)
 
 
-def _catalog_unavailable(exc):
-    """JSON 503 cuando fallan tablas, columnas u ordenación del catálogo."""
+def _catalog_error(exc):
+    """
+    Devuelve el error real en JSON (no tumba el worker).
+    Incluye results vacíos para que el frontend pueda degradar con lista [].
+    """
     logger.exception("Ecommerce catalog failed: %s", exc)
+    detail = str(exc) or exc.__class__.__name__
     return Response(
         {
             "success": False,
-            "error": [
-                {
-                    "field": "catalog",
-                    "message": (
-                        "El catálogo no está disponible temporalmente. "
-                        "Verifica que las migraciones de ecommerce estén aplicadas."
-                    ),
-                }
-            ],
+            "error": detail,
+            "detail": detail,
             "count": 0,
             "results": [],
-            "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+            "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
         },
-        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
     )
+
+
+def _ecommerce_table_status():
+    from django.db import connection
+
+    required = (
+        "ecommerce_categories",
+        "ecommerce_products",
+        "ecommerce_discounts",
+        "ecommerce_orders",
+        "ecommerce_order_items",
+    )
+    try:
+        existing = set(connection.introspection.table_names())
+        missing = [t for t in required if t not in existing]
+        return {
+            "ok": not missing,
+            "missing_tables": missing,
+            "ecommerce_in_installed_apps": True,
+        }
+    except Exception as exc:
+        logger.exception("ecommerce health introspection failed")
+        return {"ok": False, "missing_tables": list(required), "introspection_error": str(exc)}
 
 
 class PublicReadManagerWrite(IsManagerOrReadOnly):
@@ -104,13 +124,24 @@ class CategoryViewSet(viewsets.ModelViewSet):
     ordering = ["sort_order", "name"]
 
     def get_queryset(self):
-        qs = Category.objects.select_related("organization")
-        org = _request_org(self.request)
-        if org:
-            qs = qs.filter(organization=org)
-        if self.action in ("list", "retrieve"):
-            qs = qs.filter(is_active=True)
-        return qs
+        try:
+            qs = Category.objects.select_related("organization")
+            org = _request_org(self.request)
+            if org:
+                qs = qs.filter(organization=org)
+            if self.action in ("list", "retrieve"):
+                qs = qs.filter(is_active=True)
+            return qs
+        except Exception as e:
+            logger.error("CategoryViewSet.get_queryset failed: %s", e, exc_info=True)
+            raise
+
+    @action(detail=False, methods=["get"], url_path="health", permission_classes=[AllowAny])
+    def health(self, request):
+        """Diagnóstico de tablas ecommerce (público)."""
+        payload = _ecommerce_table_status()
+        code = status.HTTP_200_OK if payload.get("ok") else status.HTTP_503_SERVICE_UNAVAILABLE
+        return Response(payload, status=code)
 
     def list(self, request, *args, **kwargs):
         try:
@@ -134,8 +165,13 @@ class CategoryViewSet(viewsets.ModelViewSet):
                     logger.exception("Cache set falló para categorías")
                 return response
             return super().list(request, *args, **kwargs)
-        except (DatabaseError, FieldError) as exc:
-            return _catalog_unavailable(exc)
+        except Http404:
+            raise
+        except APIException:
+            raise
+        except Exception as e:
+            logger.error("CategoryViewSet.list failed: %s", e, exc_info=True)
+            return _catalog_error(e)
 
     def perform_create(self, serializer):
         org = self.request.user.organization
@@ -168,26 +204,35 @@ class ProductViewSet(viewsets.ModelViewSet):
         return ProductListSerializer
 
     def get_queryset(self):
-        qs = Product.objects.select_related("category", "organization")
-        org = _request_org(self.request)
-        if org:
-            qs = qs.filter(organization=org)
-        if self.action in ("list", "retrieve"):
-            user = self.request.user
-            is_manager = (
-                getattr(user, "is_authenticated", False)
-                and getattr(user, "role", None) == "manager"
-                and getattr(user, "organization_id", None) == getattr(org, "id", None)
-            )
-            if not is_manager:
-                qs = qs.filter(is_published=True, is_active=True)
-        return qs
+        try:
+            qs = Product.objects.select_related("category", "organization")
+            org = _request_org(self.request)
+            if org:
+                qs = qs.filter(organization=org)
+            if self.action in ("list", "retrieve"):
+                user = self.request.user
+                is_manager = (
+                    getattr(user, "is_authenticated", False)
+                    and getattr(user, "role", None) == "manager"
+                    and getattr(user, "organization_id", None) == getattr(org, "id", None)
+                )
+                if not is_manager:
+                    qs = qs.filter(is_published=True, is_active=True)
+            return qs
+        except Exception as e:
+            logger.error("ProductViewSet.get_queryset failed: %s", e, exc_info=True)
+            raise
 
     def list(self, request, *args, **kwargs):
         try:
             return super().list(request, *args, **kwargs)
-        except (DatabaseError, FieldError) as exc:
-            return _catalog_unavailable(exc)
+        except Http404:
+            raise
+        except APIException:
+            raise
+        except Exception as e:
+            logger.error("ProductViewSet.list failed: %s", e, exc_info=True)
+            return _catalog_error(e)
 
     def retrieve(self, request, *args, **kwargs):
         try:
@@ -210,8 +255,13 @@ class ProductViewSet(viewsets.ModelViewSet):
                     logger.exception("Cache set falló para producto")
                 return response
             return super().retrieve(request, *args, **kwargs)
-        except (DatabaseError, FieldError) as exc:
-            return _catalog_unavailable(exc)
+        except Http404:
+            raise
+        except APIException:
+            raise
+        except Exception as e:
+            logger.error("ProductViewSet.retrieve failed: %s", e, exc_info=True)
+            return _catalog_error(e)
 
     def perform_create(self, serializer):
         org = self.request.user.organization
