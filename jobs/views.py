@@ -120,16 +120,14 @@ class JobOfferViewSet(viewsets.ModelViewSet):
         # 3. Validar y restar créditos
         with transaction.atomic():
             fresh_user = User.objects.select_for_update().get(id=user.id)
-            if fresh_user.credits < 5:
-                raise ValidationError(
-                    {
-                        "detail": f"No tienes suficientes créditos para publicar una oferta de empleo. "
-                        f"Publicar un empleo cuesta 5 créditos y actualmente tienes {fresh_user.credits} créditos."
-                    }
-                )
-            fresh_user.credits -= 5
-            fresh_user.save(update_fields=["credits"])
-            user.credits = fresh_user.credits
+            from authentication.credits import charge_credits
+
+            user.credits = charge_credits(
+                fresh_user,
+                5,
+                "No tienes suficientes créditos para publicar una oferta de empleo. "
+                f"Publicar un empleo cuesta 5 créditos y actualmente tienes {fresh_user.credits} créditos.",
+            )
 
             # 4. Si llegamos aquí, guardamos con seguridad
             serializer.save(

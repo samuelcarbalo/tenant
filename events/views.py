@@ -69,18 +69,13 @@ class EventListingViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             fresh_user = User.objects.select_for_update().get(id=user.id)
-            if fresh_user.credits < CREDIT_COST_EVENT:
-                raise ValidationError(
-                    {
-                        "detail": (
-                            f"Publicar un evento cuesta {CREDIT_COST_EVENT} créditos. "
-                            f"Tienes {fresh_user.credits}."
-                        )
-                    }
-                )
-            fresh_user.credits -= CREDIT_COST_EVENT
-            fresh_user.save(update_fields=["credits"])
-            user.credits = fresh_user.credits
+            from authentication.credits import charge_credits
+
+            user.credits = charge_credits(
+                fresh_user,
+                CREDIT_COST_EVENT,
+                f"Publicar un evento cuesta {CREDIT_COST_EVENT} créditos. Tienes {fresh_user.credits}.",
+            )
 
             serializer.save(
                 organization=user.organization,

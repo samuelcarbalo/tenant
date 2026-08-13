@@ -162,16 +162,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             fresh_user = User.objects.select_for_update().get(id=user.id)
-            if fresh_user.credits < 50:
-                raise ValidationError(
-                    {
-                        "detail": f"No tienes suficientes créditos para crear un torneo. "
-                        f"Crear un torneo cuesta 50 créditos y actualmente tienes {fresh_user.credits} créditos."
-                    }
-                )
-            fresh_user.credits -= 50
-            fresh_user.save(update_fields=["credits"])
-            user.credits = fresh_user.credits
+            from authentication.credits import charge_credits
+
+            user.credits = charge_credits(
+                fresh_user,
+                50,
+                "No tienes suficientes créditos para crear un torneo. "
+                f"Crear un torneo cuesta 50 créditos y actualmente tienes {fresh_user.credits} créditos.",
+            )
 
             tournament = serializer.save(
                 posted_by=user,

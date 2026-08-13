@@ -63,3 +63,9 @@ class PlatformLoginTests(TestCase):
             }
         )
         self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_superuser_login_with_tenant_slug_from_pwa(self):
+        user = resolve_login_user("admin@platform.com", "SecurePass123!", "test-org")
+        self.assertIsNotNone(user)
+        self.assertTrue(user.is_superuser)
+
