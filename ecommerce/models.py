@@ -33,7 +33,10 @@ class Category(TimeStampedModel):
             ),
         ]
         indexes = [
-            models.Index(fields=["organization", "is_active", "sort_order"]),
+            models.Index(
+                fields=["organization", "is_active", "sort_order"],
+                name="ecommerce_c_organiz_7d1a0c_idx",
+            ),
         ]
 
     def __str__(self):
@@ -84,9 +87,15 @@ class Product(TimeStampedModel):
             ),
         ]
         indexes = [
-            models.Index(fields=["organization", "is_published", "is_active"]),
-            models.Index(fields=["organization", "category", "price_cop"]),
-            models.Index(fields=["name"]),
+            models.Index(
+                fields=["organization", "is_published", "is_active"],
+                name="ecommerce_p_organiz_pub_idx",
+            ),
+            models.Index(
+                fields=["organization", "category", "price_cop"],
+                name="ecommerce_p_organiz_cat_idx",
+            ),
+            models.Index(fields=["name"], name="ecommerce_p_name_idx"),
         ]
 
     def __str__(self):
@@ -148,7 +157,10 @@ class Discount(TimeStampedModel):
             ),
         ]
         indexes = [
-            models.Index(fields=["organization", "code", "is_active"]),
+            models.Index(
+                fields=["organization", "code", "is_active"],
+                name="ecommerce_d_organiz_a1b2c3_idx",
+            ),
         ]
 
     def __str__(self):
@@ -219,8 +231,14 @@ class ShopOrder(TimeStampedModel):
         db_table = "ecommerce_orders"
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["buyer", "status", "created_at"]),
-            models.Index(fields=["organization", "status"]),
+            models.Index(
+                fields=["buyer", "status", "created_at"],
+                name="ecommerce_o_buyer_st_idx",
+            ),
+            models.Index(
+                fields=["organization", "status"],
+                name="ecommerce_o_organiz_st_idx",
+            ),
         ]
 
     def __str__(self):

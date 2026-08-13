@@ -19,8 +19,8 @@ class CategorySerializer(serializers.ModelSerializer):
 
 
 class ProductListSerializer(serializers.ModelSerializer):
-    category_name = serializers.CharField(source="category.name", read_only=True, default=None)
-    category_slug = serializers.CharField(source="category.slug", read_only=True, default=None)
+    category_name = serializers.SerializerMethodField()
+    category_slug = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -40,6 +40,14 @@ class ProductListSerializer(serializers.ModelSerializer):
             "category_slug",
             "created_at",
         ]
+
+    def get_category_name(self, obj):
+        category = getattr(obj, "category", None)
+        return getattr(category, "name", None) if category is not None else None
+
+    def get_category_slug(self, obj):
+        category = getattr(obj, "category", None)
+        return getattr(category, "slug", None) if category is not None else None
 
 
 class ProductDetailSerializer(ProductListSerializer):

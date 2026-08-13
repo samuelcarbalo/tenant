@@ -109,6 +109,46 @@ class CatalogAPITests(EcommerceBaseTest):
         res = self.anon.get(f"{API}/categories/")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
 
+    def test_list_products_in_stock_featured_ordering(self):
+        res = self.anon.get(
+            f"{API}/products/",
+            {"in_stock": "true", "ordering": "-is_featured"},
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        results = res.data.get("results", res.data)
+        self.assertGreaterEqual(len(results), 1)
+        self.assertTrue(results[0]["is_featured"])
+
+    def test_product_without_category_serializes(self):
+        Product.objects.create(
+            organization=self.org,
+            category=None,
+            name="Sin categoria",
+            slug="sin-categoria",
+            price_cop=Decimal("10000"),
+            stock=3,
+            is_published=True,
+        )
+        res = self.anon.get(f"{API}/products/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        results = res.data.get("results", res.data)
+        uncategorized = next(p for p in results if p["slug"] == "sin-categoria")
+        self.assertIsNone(uncategorized["category_name"])
+        self.assertIsNone(uncategorized["category_slug"])
+
+    @patch.object(Category.objects, "select_related")
+    def test_categories_db_error_returns_json(self, mock_select):
+        from django.db.utils import ProgrammingError
+
+        mock_select.side_effect = ProgrammingError(
+            'relation "ecommerce_categories" does not exist'
+        )
+        res = self.anon.get(f"{API}/categories/")
+        self.assertEqual(res.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(res.data.get("success"), False)
+        self.assertEqual(res.data.get("results"), [])
+        self.assertTrue(isinstance(res.data.get("error"), list))
+
     def test_unpublished_hidden_from_public(self):
         self.product.is_published = False
         self.product.save(update_fields=["is_published"])
@@ -207,3 +247,30 @@ class CheckoutAPITests(EcommerceBaseTest):
             format="json",
         )
         self.assertIn(res.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+
+class ExceptionHandlerTests(TestCase):
+    def test_programming_error_returns_json_503(self):
+        from django.db.utils import ProgrammingError
+
+        from core.exceptions import custom_exception_handler
+
+        response = custom_exception_handler(
+            ProgrammingError('relation "ecommerce_products" does not exist'),
+            {"view": None, "request": None},
+        )
+        self.assertIsNotNone(response)
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(response.data["success"], False)
+        self.assertEqual(response.data["error"][0]["field"], "database")
+
+    def test_unhandled_error_returns_json_500(self):
+        from core.exceptions import custom_exception_handler
+
+        response = custom_exception_handler(
+            RuntimeError("boom"),
+            {"view": None, "request": None},
+        )
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertEqual(response.data["success"], False)
+        self.assertEqual(response.data["error"][0]["field"], "server")
