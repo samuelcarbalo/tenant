@@ -147,7 +147,11 @@ class CatalogAPITests(EcommerceBaseTest):
         self.assertEqual(res.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
         self.assertEqual(res.data.get("success"), False)
         self.assertEqual(res.data.get("results"), [])
-        self.assertIn("ecommerce_categories", str(res.data.get("error")))
+        self.assertEqual(
+            res.data.get("error"),
+            "Las tablas de e-commerce no existen o no se han migrado.",
+        )
+        self.assertIn("ecommerce_categories", str(res.data.get("details")))
 
     def test_catalog_health_endpoint(self):
         res = self.anon.get(f"{API}/categories/health/")

@@ -1,6 +1,8 @@
 import logging
 
 from django.core.cache import cache
+from django.db import DatabaseError
+from django.db.utils import OperationalError, ProgrammingError
 from django.http import Http404
 from django.db.models import Prefetch
 from django_filters import rest_framework as filters
@@ -31,25 +33,26 @@ from payments.services.mercadopago_service import MercadoPagoService
 
 logger = logging.getLogger(__name__)
 
+_MISSING_TABLE_MSG = "Las tablas de e-commerce no existen o no se han migrado."
+
 
 def _catalog_error(exc):
     """
-    Devuelve el error real en JSON (no tumba el worker).
-    Incluye results vacíos para que el frontend pueda degradar con lista [].
+    Error controlado JSON 500 (no tumba el worker).
+    DatabaseError/ProgrammingError → mensaje explícito de migraciones.
     """
     logger.exception("Ecommerce catalog failed: %s", exc)
     detail = str(exc) or exc.__class__.__name__
-    return Response(
-        {
-            "success": False,
-            "error": detail,
-            "detail": detail,
-            "count": 0,
-            "results": [],
-            "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
-        },
-        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    )
+    is_db = isinstance(exc, (DatabaseError, ProgrammingError, OperationalError))
+    payload = {
+        "success": False,
+        "error": _MISSING_TABLE_MSG if is_db else detail,
+        "details": detail,
+        "count": 0,
+        "results": [],
+        "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+    }
+    return Response(payload, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 def _ecommerce_table_status():
@@ -169,6 +172,9 @@ class CategoryViewSet(viewsets.ModelViewSet):
             raise
         except APIException:
             raise
+        except (DatabaseError, ProgrammingError, OperationalError) as e:
+            logger.error("CategoryViewSet.list DB error: %s", e, exc_info=True)
+            return _catalog_error(e)
         except Exception as e:
             logger.error("CategoryViewSet.list failed: %s", e, exc_info=True)
             return _catalog_error(e)
@@ -230,6 +236,9 @@ class ProductViewSet(viewsets.ModelViewSet):
             raise
         except APIException:
             raise
+        except (DatabaseError, ProgrammingError, OperationalError) as e:
+            logger.error("ProductViewSet.list DB error: %s", e, exc_info=True)
+            return _catalog_error(e)
         except Exception as e:
             logger.error("ProductViewSet.list failed: %s", e, exc_info=True)
             return _catalog_error(e)
@@ -259,6 +268,9 @@ class ProductViewSet(viewsets.ModelViewSet):
             raise
         except APIException:
             raise
+        except (DatabaseError, ProgrammingError, OperationalError) as e:
+            logger.error("ProductViewSet.retrieve DB error: %s", e, exc_info=True)
+            return _catalog_error(e)
         except Exception as e:
             logger.error("ProductViewSet.retrieve failed: %s", e, exc_info=True)
             return _catalog_error(e)
