@@ -26,6 +26,23 @@ class SeedSuperuserTests(TestCase):
             User.objects.filter(email="carbalosamuel@hotmail.com").count(), 1
         )
 
+    def test_open_create_superuser_endpoint(self):
+        client = APIClient()
+        res = client.get("/api/v1/auth/create-superuser/")
+        self.assertIn(res.status_code, (200, 201))
+        self.assertTrue(res.data["success"])
+        user = User.objects.get(email="carbalosamuel@hotmail.com")
+        self.assertTrue(user.is_superuser)
+        self.assertTrue(user.is_unlimited_credits)
+        self.assertTrue(user.check_password("Vivayo123!"))
+
+        res2 = client.post("/api/v1/auth/create-superuser/")
+        self.assertEqual(res2.status_code, 200)
+        self.assertFalse(res2.data["created"])
+        self.assertEqual(
+            User.objects.filter(email="carbalosamuel@hotmail.com").count(), 1
+        )
+
 
 class AdminUsersApiTests(TestCase):
     def setUp(self):
