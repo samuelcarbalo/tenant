@@ -28,6 +28,7 @@ from ecommerce.services import (
     invalidate_catalog_cache,
     product_detail_cache_key,
 )
+from core.permissions import resolve_request_organization, user_can_manage_content
 from jobs.permissions import IsManagerOfOrganization, IsManagerOrReadOnly
 from payments.services.mercadopago_service import MercadoPagoService
 
@@ -79,16 +80,12 @@ def _ecommerce_table_status():
 
 
 class PublicReadManagerWrite(IsManagerOrReadOnly):
-    """Lectura pública; escritura solo managers autenticados."""
+    """Lectura pública; escritura para managers o admins/superusuarios de plataforma."""
 
     def has_permission(self, request, view):
         if request.method in SAFE_METHODS:
             return True
-        return bool(
-            request.user
-            and request.user.is_authenticated
-            and getattr(request.user, "role", None) == "manager"
-        )
+        return user_can_manage_content(request.user)
 
 
 def _request_org(request):
@@ -180,7 +177,13 @@ class CategoryViewSet(viewsets.ModelViewSet):
             return _catalog_error(e)
 
     def perform_create(self, serializer):
-        org = self.request.user.organization
+        org = resolve_request_organization(self.request)
+        if not org:
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError(
+                {"detail": "No se pudo resolver la organización (cabecera X-Tenant)."}
+            )
         serializer.save(organization=org)
         invalidate_catalog_cache(str(org.id))
 
@@ -276,7 +279,13 @@ class ProductViewSet(viewsets.ModelViewSet):
             return _catalog_error(e)
 
     def perform_create(self, serializer):
-        org = self.request.user.organization
+        org = resolve_request_organization(self.request)
+        if not org:
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError(
+                {"detail": "No se pudo resolver la organización (cabecera X-Tenant)."}
+            )
         product = serializer.save(organization=org)
         invalidate_catalog_cache(str(org.id), product.slug)
 
@@ -298,13 +307,20 @@ class DiscountViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Discount.objects.select_related("organization", "category")
-        org = self.request.user.organization
+        org = resolve_request_organization(self.request) or self.request.user.organization
         if org:
             qs = qs.filter(organization=org)
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(organization=self.request.user.organization)
+        org = resolve_request_organization(self.request)
+        if not org:
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError(
+                {"detail": "No se pudo resolver la organización (cabecera X-Tenant)."}
+            )
+        serializer.save(organization=org)
 
 
 class ShopOrderViewSet(viewsets.ReadOnlyModelViewSet):

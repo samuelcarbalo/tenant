@@ -7,6 +7,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from core.permissions import resolve_request_organization, user_is_platform_elevated
 from authentication.models import User
 from django.db import transaction
 from payments.advertising_packages import CREDIT_COST_EVENT
@@ -49,7 +50,10 @@ class EventListingViewSet(viewsets.ModelViewSet):
         if (
             self.request.user.is_authenticated
             and my_events.lower() == "true"
-            and self.request.user.role in ("manager", "admin")
+            and (
+                self.request.user.role in ("manager", "admin")
+                or user_is_platform_elevated(self.request.user)
+            )
         ):
             return qs.filter(posted_by=self.request.user)
 
@@ -61,10 +65,16 @@ class EventListingViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user = self.request.user
+        org = resolve_request_organization(self.request)
+        if not org:
+            raise ValidationError(
+                {"detail": "No se pudo resolver la organización (cabecera X-Tenant)."}
+            )
         organizer = (
             serializer.validated_data.get("organizer_name")
             or user.company_name
-            or (user.organization.name if user.organization else user.get_full_name())
+            or org.name
+            or user.get_full_name()
         )
 
         with transaction.atomic():
@@ -78,7 +88,7 @@ class EventListingViewSet(viewsets.ModelViewSet):
             )
 
             serializer.save(
-                organization=user.organization,
+                organization=org,
                 posted_by=user,
                 organizer_name=organizer,
             )

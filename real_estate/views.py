@@ -15,6 +15,7 @@ from .serializers import (
     RealEstateOfferDetailSerializer,
     RealEstateOfferCreateUpdateSerializer,
 )
+from core.permissions import resolve_request_organization, user_can_manage_content, user_is_platform_elevated
 from .permissions import IsManagerOfOrganization
 
 
@@ -63,7 +64,9 @@ class RealEstateOfferViewSet(viewsets.ModelViewSet):
         queryset = RealEstateOffer.objects.select_related("organization", "posted_by")
 
         # Si el manager solicita sus propias ofertas
-        if user.is_authenticated and user.role in ("manager", "admin"):
+        if user.is_authenticated and (
+            user.role in ("manager", "admin") or user_is_platform_elevated(user)
+        ):
             my_offers = self.request.query_params.get("my_offers", "false")
             if my_offers.lower() == "true":
                 queryset = queryset.filter(posted_by=user)
@@ -91,9 +94,10 @@ class RealEstateOfferViewSet(viewsets.ModelViewSet):
         user = self.request.user
         from authentication.models import User
 
-        if not user.organization:
+        org = resolve_request_organization(self.request)
+        if not org:
             raise ValidationError(
-                {"detail": "Debes pertenecer a una organización para publicar."}
+                {"detail": "No se pudo resolver la organización (cabecera X-Tenant)."}
             )
 
         with transaction.atomic():
@@ -109,7 +113,7 @@ class RealEstateOfferViewSet(viewsets.ModelViewSet):
 
             # Guardar el registro de bienes raíces
             serializer.save(
-                organization=user.organization,
+                organization=org,
                 posted_by=user,
             )
 
@@ -126,9 +130,9 @@ class RealEstateOfferViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
     def my_offers(self, request):
         """Listar propiedades publicadas por el manager autenticado."""
-        if request.user.role not in ("manager", "admin"):
+        if not user_can_manage_content(request.user):
             return Response(
-                {"error": "Solo managers pueden ver sus publicaciones."},
+                {"error": "Solo managers o administradores pueden ver sus publicaciones."},
                 status=status.HTTP_403_FORBIDDEN,
             )
         queryset = (
@@ -148,7 +152,13 @@ class RealEstateOfferViewSet(viewsets.ModelViewSet):
         Renovar la publicación de bienes raíces por 30 días más.
         """
         offer = self.get_object()
-        if request.user.role not in ("manager", "admin") or request.user.organization != offer.organization:
+        user = request.user
+        if not user_can_manage_content(user):
+            return Response(
+                {"error": "No tienes permiso para renovar esta oferta."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if not user_is_platform_elevated(user) and user.organization != offer.organization:
             return Response(
                 {"error": "No tienes permiso para renovar esta oferta."},
                 status=status.HTTP_403_FORBIDDEN,

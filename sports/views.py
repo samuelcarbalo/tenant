@@ -65,7 +65,7 @@ from .services.structure import (
 )
 from .services.advancement import advance_phase as run_advance_phase, SourceResolutionError
 from sports.models import BracketNode
-from core.permissions import IsOrganizationMember, IsCoachOfTeam
+from core.permissions import IsOrganizationMember, IsCoachOfTeam, resolve_request_organization, user_can_manage_content, user_is_platform_elevated
 
 
 class TournamentViewSet(viewsets.ModelViewSet):
@@ -171,9 +171,15 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 f"Crear un torneo cuesta 50 créditos y actualmente tienes {fresh_user.credits} créditos.",
             )
 
+            org = resolve_request_organization(self.request)
+            if not org:
+                raise ValidationError(
+                    {"detail": "No se pudo resolver la organización (cabecera X-Tenant)."}
+                )
+
             tournament = serializer.save(
                 posted_by=user,
-                organization=user.organization,
+                organization=org,
             )
 
             if format_template and format_template not in ("", "legacy_league"):
@@ -430,8 +436,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         """
         user = request.user
 
-        # Verificar que el usuario sea admin de la organización
-        if user.role not in ["manager"]:
+        if not user_can_manage_content(user):
             print(f"DEBUG: User {user} is not an admin")
             print(f"DEBUG: User role is {user.role}")
             return Response(
@@ -441,8 +446,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        queryset = self.get_queryset()
+        if not user_is_platform_elevated(user):
+            queryset = queryset.filter(posted_by=user)
         else:
-            queryset = self.get_queryset().filter(posted_by=user)
+            # Plataforma: ver todos, o filtrar por los propios si se pide
+            mine = request.query_params.get("mine", "false")
+            if mine.lower() == "true":
+                queryset = queryset.filter(posted_by=user)
 
         # Aplicar paginación
         page = self.paginate_queryset(queryset)

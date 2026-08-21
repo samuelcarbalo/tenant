@@ -19,6 +19,7 @@ from .serializers import (
     JobApplicationSerializer,
     JobApplicationUpdateSerializer,
 )
+from core.permissions import resolve_request_organization, user_is_platform_elevated
 from .permissions import IsManagerOfOrganization, CanApplyToJob
 
 
@@ -73,10 +74,15 @@ class JobOfferViewSet(viewsets.ModelViewSet):
         user = self.request.user
         queryset = JobOffer.objects.select_related("organization", "posted_by")
 
-        if user.is_authenticated and user.role == "manager":
+        if user.is_authenticated and (
+            user.role == "manager" or user_is_platform_elevated(user)
+        ):
             my_offers = self.request.query_params.get("my_offers", "false")
             if my_offers.lower() == "true":
-                queryset = queryset.filter(company_name=user.company_name)
+                if user_is_platform_elevated(user):
+                    queryset = queryset.filter(posted_by=user)
+                else:
+                    queryset = queryset.filter(company_name=user.company_name)
         # Filtrar por organización si se especifica
         org_slug = self.request.query_params.get("organization")
         if org_slug:
@@ -103,17 +109,18 @@ class JobOfferViewSet(viewsets.ModelViewSet):
         user = self.request.user
         print(f"DEBUG: User is {user} - Auth: {user.is_authenticated}")
 
-        # 1. Intentar obtener el nombre (Prioridad: Usuario > Organización)
+        org = resolve_request_organization(self.request)
         company_name = user.company_name or (
-            user.organization.name if user.organization else None
-        )
+            org.name if org else None
+        ) or (
+            user.get_full_name() if user_is_platform_elevated(user) else None
+        ) or "Plataforma"
         print(f"DEBUG: Company name is {company_name}")
-        # 2. Hard check: Si no hay nombre, abortamos la operación
-        if not company_name:
+        if not org:
             raise ValidationError(
                 {
-                    "detail": "No se pudo determinar el nombre de la empresa. "
-                    "El usuario o su organización deben tener un nombre asignado."
+                    "detail": "No se pudo resolver la organización. "
+                    "Envía la cabecera X-Tenant o asigna una organización al usuario."
                 }
             )
 
@@ -131,7 +138,7 @@ class JobOfferViewSet(viewsets.ModelViewSet):
 
             # 4. Si llegamos aquí, guardamos con seguridad
             serializer.save(
-                organization=user.organization,
+                organization=org,
                 posted_by=user,
                 company_name=company_name,
             )
@@ -144,8 +151,11 @@ class JobOfferViewSet(viewsets.ModelViewSet):
         user = self.request.user
 
         # Siempre usar el company_name del usuario, ignorar lo del frontend
+        org = resolve_request_organization(self.request)
         company_name = user.company_name or (
-            user.organization.name if user.organization else None
+            org.name if org else None
+        ) or (
+            user.get_full_name() if user_is_platform_elevated(user) else None
         )
 
         if not company_name:
