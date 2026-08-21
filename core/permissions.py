@@ -1,6 +1,53 @@
 from rest_framework import permissions
 
 
+def user_is_platform_elevated(user) -> bool:
+    """Superuser / staff / role admin de plataforma (sin org o cross-tenant)."""
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    return bool(
+        user.is_superuser
+        or user.is_staff
+        or getattr(user, "role", None) == "admin"
+    )
+
+
+def user_can_manage_content(user) -> bool:
+    """Puede crear/editar contenido de módulos (manager de org o admin de plataforma)."""
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    if user_is_platform_elevated(user):
+        return True
+    return getattr(user, "role", None) == "manager"
+
+
+def resolve_request_organization(request):
+    """
+    Organización de escritura: middleware (X-Tenant) → user.organization → primera activa.
+    Necesario para superusuarios de plataforma sin organización propia.
+    """
+    org = getattr(request, "current_organization", None)
+    if org is not None:
+        return org
+
+    user = getattr(request, "user", None)
+    if user is not None and getattr(user, "is_authenticated", False):
+        user_org = getattr(user, "organization", None)
+        if user_org is not None:
+            return user_org
+
+    from organizations.models import Organization
+
+    slug = None
+    if hasattr(request, "headers"):
+        slug = request.headers.get("X-Tenant")
+    if slug:
+        org = Organization.objects.filter(slug=slug, is_active=True).first()
+        if org:
+            return org
+    return Organization.objects.filter(is_active=True).order_by("created_at").first()
+
+
 class IsCoachOfTeam(permissions.BasePermission):
     """
     Permiso que verifica si el usuario autenticado es el coach (coach_email) del equipo.
