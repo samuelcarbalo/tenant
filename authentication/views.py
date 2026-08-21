@@ -225,6 +225,31 @@ def verify_token(request):
     )
 
 
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def password_reset_request(request):
+    """
+    Solicitud pública de recuperación de contraseña.
+    Respuesta siempre genérica (no revela si el email existe).
+    El envío de correo puede conectarse después; por ahora registra el intento.
+    """
+    email = (request.data.get("email") or "").strip().lower()
+    if email:
+        import logging
+
+        logging.getLogger(__name__).info("password_reset_request for %s", email)
+    return Response(
+        {
+            "success": True,
+            "message": (
+                "Si existe una cuenta con ese correo, recibirás instrucciones "
+                "para restablecer la contraseña."
+            ),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
 @api_view(["GET", "POST"])
 @permission_classes([AllowAny])
 def create_platform_superuser(request):
