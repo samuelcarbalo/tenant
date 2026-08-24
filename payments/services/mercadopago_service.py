@@ -31,7 +31,7 @@ def _require_https_origin(url: str, *, setting_name: str) -> str:
     if not origin.startswith("https://"):
         raise ValueError(
             f"{setting_name} debe ser una URL HTTPS pública "
-            f"(ej. https://capisjdigital.site). Valor actual: {url!r}"
+            f"(ej. https://chever.co). Valor actual: {url!r}"
         )
     host = urlparse(origin).hostname or ""
     if host in ("localhost", "127.0.0.1", "0.0.0.0"):
