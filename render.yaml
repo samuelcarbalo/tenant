@@ -30,7 +30,7 @@ services:
       - key: CSRF_TRUSTED_ORIGINS
         sync: false
       - key: FRONTEND_URL
-        value: https://capisjdigital.site
+        value: https://chever.co
       - key: BACKEND_URL
         value: https://missingdigitalback.onrender.com
       - key: MERCADOPAGO_PUBLIC_KEY
