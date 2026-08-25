@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import ValidationError
 from django.db.models import Q, Count, Prefetch, F
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from django.db import transaction
 from authentication.models import User
 from profiles.models import Profile
@@ -934,6 +935,46 @@ class MatchViewSet(viewsets.ModelViewSet):
             return [AllowAny()]
         return [IsAuthenticated(), IsOrganizationMember()]
 
+    def _direction_params(self):
+        """Parámetros de búsqueda asistida por cercanía de fecha."""
+        direction = (self.request.query_params.get("direction") or "").strip().lower()
+        if direction not in {"upcoming", "past"}:
+            return None
+
+        raw_from = (
+            self.request.query_params.get("from_date")
+            or self.request.query_params.get("from")
+        )
+        if not raw_from:
+            raise ValidationError(
+                {"from_date": "Requerido cuando se usa direction=upcoming|past."}
+            )
+
+        from_date = parse_date(raw_from)
+        if from_date is None:
+            raise ValidationError(
+                {"from_date": "Formato inválido. Use YYYY-MM-DD."}
+            )
+
+        try:
+            limit = int(self.request.query_params.get("limit", 5))
+        except (TypeError, ValueError):
+            limit = 5
+        limit = max(1, min(limit, 50))
+
+        try:
+            offset = int(self.request.query_params.get("offset", 0))
+        except (TypeError, ValueError):
+            offset = 0
+        offset = max(0, offset)
+
+        return {
+            "direction": direction,
+            "from_date": from_date,
+            "limit": limit,
+            "offset": offset,
+        }
+
     def get_queryset(self):
         queryset = Match.objects.select_related(
             "tournament", "home_team", "away_team"
@@ -959,7 +1000,24 @@ class MatchViewSet(viewsets.ModelViewSet):
         if live_only:
             queryset = queryset.filter(status="live")
 
-        # Fecha
+        # Búsqueda asistida: partidos cercanos a from_date (solo list)
+        if self.action == "list":
+            direction_params = self._direction_params()
+            if direction_params:
+                from_date = direction_params["from_date"]
+                if direction_params["direction"] == "upcoming":
+                    # Próximos a partir del día seleccionado (excluye el día vacío)
+                    queryset = queryset.filter(match_date__date__gt=from_date).order_by(
+                        "match_date"
+                    )
+                else:
+                    # Más recientes anteriores al día seleccionado
+                    queryset = queryset.filter(match_date__date__lt=from_date).order_by(
+                        "-match_date"
+                    )
+                return queryset
+
+        # Fecha (rango clásico from/to)
         date_from = self.request.query_params.get("from")
         date_to = self.request.query_params.get("to")
         if date_from:
@@ -976,6 +1034,75 @@ class MatchViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(group__slug=group_param)
 
         return queryset.order_by("match_date")
+
+    def paginate_queryset(self, queryset):
+        if self.action == "list":
+            direction_params = self._direction_params()
+            if direction_params:
+                limit = direction_params["limit"]
+                offset = direction_params["offset"]
+                self._nearby_meta = {
+                    "count": queryset.count(),
+                    "limit": limit,
+                    "offset": offset,
+                    "direction": direction_params["direction"],
+                    "from_date": direction_params["from_date"].isoformat(),
+                }
+                return list(queryset[offset : offset + limit])
+        return super().paginate_queryset(queryset)
+
+    def get_paginated_response(self, data):
+        meta = getattr(self, "_nearby_meta", None)
+        if meta is not None:
+            count = meta["count"]
+            limit = meta["limit"]
+            offset = meta["offset"]
+            has_more = offset + limit < count
+            has_prev = offset > 0
+            next_offset = offset + limit if has_more else None
+            prev_offset = max(0, offset - limit) if has_prev else None
+            return Response(
+                {
+                    "count": count,
+                    "limit": limit,
+                    "offset": offset,
+                    "direction": meta["direction"],
+                    "from_date": meta["from_date"],
+                    "has_more": has_more,
+                    "next": (
+                        f"?direction={meta['direction']}"
+                        f"&from_date={meta['from_date']}"
+                        f"&limit={limit}&offset={next_offset}"
+                        if next_offset is not None
+                        else None
+                    ),
+                    "previous": (
+                        f"?direction={meta['direction']}"
+                        f"&from_date={meta['from_date']}"
+                        f"&limit={limit}&offset={prev_offset}"
+                        if prev_offset is not None
+                        else None
+                    ),
+                    "links": {
+                        "next": (
+                            f"?direction={meta['direction']}"
+                            f"&from_date={meta['from_date']}"
+                            f"&limit={limit}&offset={next_offset}"
+                            if next_offset is not None
+                            else None
+                        ),
+                        "previous": (
+                            f"?direction={meta['direction']}"
+                            f"&from_date={meta['from_date']}"
+                            f"&limit={limit}&offset={prev_offset}"
+                            if prev_offset is not None
+                            else None
+                        ),
+                    },
+                    "results": data,
+                }
+            )
+        return super().get_paginated_response(data)
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def update_score(self, request, pk=None):

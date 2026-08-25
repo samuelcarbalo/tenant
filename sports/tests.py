@@ -1,6 +1,7 @@
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from datetime import timedelta
 
 from authentication.models import User
 from organizations.models import Organization
@@ -164,3 +165,129 @@ class SportsSanctionsTests(TestCase):
             Profile.objects.filter(user=player.user, organization=self.organization).exists()
         )
         self.assertEqual(User.objects.filter(email="pedro@example.com").count(), 1)
+
+
+class MatchNearbyDirectionTests(TestCase):
+    """direction=upcoming|past + limit/offset sobre /sports/matches/."""
+
+    def setUp(self):
+        self.organization = Organization.objects.create(
+            name="Nearby Org",
+            slug="nearby-org",
+            description="",
+        )
+        self.user = User.objects.create_user(
+            email="nearby@example.com",
+            username="nearby",
+            password="secret123",
+            organization=self.organization,
+            role="admin",
+        )
+        self.tournament = Tournament.objects.create(
+            name="Nearby Cup",
+            slug="nearby-cup",
+            description="",
+            posted_by=self.user,
+            organization=self.organization,
+            start_date=timezone.now().date(),
+            end_date=timezone.now().date(),
+            registration_deadline=timezone.now().date(),
+        )
+        self.home = Team.objects.create(
+            name="Home FC",
+            slug="home-fc",
+            abbreviation="HFC",
+            description="",
+            posted_by=self.user,
+            tournament=self.tournament,
+            organization=self.organization,
+        )
+        self.away = Team.objects.create(
+            name="Away FC",
+            slug="away-fc",
+            abbreviation="AFC",
+            description="",
+            posted_by=self.user,
+            tournament=self.tournament,
+            organization=self.organization,
+        )
+        base = timezone.now().replace(hour=15, minute=0, second=0, microsecond=0)
+        # Día ancla vacío: D+0 no tiene partidos
+        self.anchor = base.date()
+        self.past_matches = []
+        self.future_matches = []
+        for i in range(1, 8):
+            self.past_matches.append(
+                Match.objects.create(
+                    tournament=self.tournament,
+                    posted_by=self.user,
+                    home_team=self.home,
+                    away_team=self.away,
+                    match_date=base - timedelta(days=i),
+                    status="finished",
+                    home_score=1,
+                    away_score=0,
+                )
+            )
+            self.future_matches.append(
+                Match.objects.create(
+                    tournament=self.tournament,
+                    posted_by=self.user,
+                    home_team=self.home,
+                    away_team=self.away,
+                    match_date=base + timedelta(days=i),
+                    status="scheduled",
+                )
+            )
+
+    def test_upcoming_returns_next_five_ascending(self):
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        res = client.get(
+            "/api/v1/sports/matches/",
+            {
+                "direction": "upcoming",
+                "from_date": self.anchor.isoformat(),
+                "limit": 5,
+            },
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.data["results"]), 5)
+        self.assertTrue(res.data["has_more"])
+        self.assertEqual(res.data["offset"], 0)
+        dates = [r["match_date"][:10] for r in res.data["results"]]
+        self.assertEqual(dates, sorted(dates))
+        self.assertTrue(all(d > self.anchor.isoformat() for d in dates))
+
+    def test_past_returns_five_descending_with_offset(self):
+        from rest_framework.test import APIClient
+
+        client = APIClient()
+        res = client.get(
+            "/api/v1/sports/matches/",
+            {
+                "direction": "past",
+                "from_date": self.anchor.isoformat(),
+                "limit": 5,
+                "offset": 0,
+            },
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.data["results"]), 5)
+        dates = [r["match_date"][:10] for r in res.data["results"]]
+        self.assertEqual(dates, sorted(dates, reverse=True))
+
+        res2 = client.get(
+            "/api/v1/sports/matches/",
+            {
+                "direction": "past",
+                "from_date": self.anchor.isoformat(),
+                "limit": 5,
+                "offset": 5,
+            },
+        )
+        self.assertEqual(res2.status_code, 200)
+        self.assertEqual(len(res2.data["results"]), 2)
+        self.assertFalse(res2.data["has_more"])
+
