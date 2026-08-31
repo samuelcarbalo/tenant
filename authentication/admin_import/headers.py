@@ -45,6 +45,8 @@ TEMPLATE_HEADERS: dict[str, list[str]] = {
         "salary_min",
         "salary_max",
         "expires_at",
+        "is_external",
+        "external_apply_url",
     ],
     "products": [
         "name",
