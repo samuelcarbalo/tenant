@@ -1,6 +1,14 @@
 from django.contrib import admin
 
-from ecommerce.models import Category, Discount, Product, ShopOrder, ShopOrderItem
+from ecommerce.models import (
+    Category,
+    Discount,
+    Product,
+    ProductDiscount,
+    ShopOrder,
+    ShopOrderItem,
+    SubCategory,
+)
 
 
 class ShopOrderItemInline(admin.TabularInline):
@@ -23,6 +31,14 @@ class CategoryAdmin(admin.ModelAdmin):
     prepopulated_fields = {"slug": ("name",)}
 
 
+@admin.register(SubCategory)
+class SubCategoryAdmin(admin.ModelAdmin):
+    list_display = ("name", "category", "slug", "organization", "sort_order", "is_active")
+    list_filter = ("organization", "category", "is_active")
+    search_fields = ("name", "slug")
+    prepopulated_fields = {"slug": ("name",)}
+
+
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
     list_display = (
@@ -31,6 +47,7 @@ class ProductAdmin(admin.ModelAdmin):
         "price_cop",
         "stock",
         "category",
+        "subcategory",
         "is_published",
         "is_featured",
         "organization",
@@ -38,6 +55,23 @@ class ProductAdmin(admin.ModelAdmin):
     list_filter = ("organization", "is_published", "is_featured", "category")
     search_fields = ("name", "sku", "slug")
     prepopulated_fields = {"slug": ("name",)}
+
+
+@admin.register(ProductDiscount)
+class ProductDiscountAdmin(admin.ModelAdmin):
+    list_display = (
+        "name",
+        "discount_type",
+        "discount_percentage",
+        "start_time",
+        "end_time",
+        "is_flash_sale",
+        "is_active",
+        "organization",
+    )
+    list_filter = ("discount_type", "is_flash_sale", "is_active", "organization")
+    search_fields = ("name",)
+    filter_horizontal = ("products",)
 
 
 @admin.register(Discount)

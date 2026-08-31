@@ -48,6 +48,49 @@ class Category(TimeStampedModel):
         super().save(*args, **kwargs)
 
 
+class SubCategory(TimeStampedModel):
+    """Subcategoría de catálogo (pertenece a una Category)."""
+
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="shop_subcategories",
+    )
+    category = models.ForeignKey(
+        Category,
+        on_delete=models.CASCADE,
+        related_name="subcategories",
+    )
+    name = models.CharField(max_length=120)
+    slug = models.SlugField(max_length=140)
+    description = models.TextField(blank=True)
+    sort_order = models.PositiveIntegerField(default=0, db_index=True)
+
+    class Meta:
+        db_table = "ecommerce_subcategories"
+        ordering = ["sort_order", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "slug"],
+                name="uniq_ecommerce_subcategory_org_slug",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "category", "is_active", "sort_order"],
+                name="ecommerce_sc_org_cat_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.category.name} / {self.name}"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)[:140]
+        super().save(*args, **kwargs)
+
+
 class Product(TimeStampedModel):
     """Producto del catálogo."""
 
@@ -58,6 +101,13 @@ class Product(TimeStampedModel):
     )
     category = models.ForeignKey(
         Category,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="products",
+    )
+    subcategory = models.ForeignKey(
+        "SubCategory",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -185,6 +235,90 @@ class Discount(TimeStampedModel):
             pct = min(self.value, Decimal("100"))
             return (subtotal * pct / Decimal("100")).quantize(Decimal("1"))
         return min(self.value, subtotal).quantize(Decimal("1"))
+
+
+class ProductDiscount(TimeStampedModel):
+    """
+    Oferta / flash sale aplicada a uno o más productos (por SKU o ID).
+    Independiente del cupón `Discount` de checkout.
+    """
+
+    TYPE_PERCENT = "percent"
+    TYPE_FIXED = "fixed"
+    TYPE_PRICE = "price"  # precio final fijo (discount_price)
+    TYPE_CHOICES = [
+        (TYPE_PERCENT, "Porcentaje"),
+        (TYPE_FIXED, "Monto fijo COP"),
+        (TYPE_PRICE, "Precio promocional"),
+    ]
+
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="product_discounts",
+    )
+    name = models.CharField(max_length=160)
+    discount_type = models.CharField(
+        max_length=16, choices=TYPE_CHOICES, default=TYPE_PERCENT
+    )
+    discount_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal("0")), MaxValueValidator(Decimal("100"))],
+    )
+    discount_amount_cop = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    discount_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Precio final COP cuando discount_type=price",
+    )
+    start_time = models.DateTimeField(db_index=True)
+    end_time = models.DateTimeField(db_index=True)
+    is_flash_sale = models.BooleanField(default=True)
+    products = models.ManyToManyField(
+        Product,
+        related_name="product_discounts",
+        blank=True,
+    )
+
+    class Meta:
+        db_table = "ecommerce_product_discounts"
+        ordering = ["-start_time"]
+        indexes = [
+            models.Index(
+                fields=["organization", "is_active", "start_time", "end_time"],
+                name="ecommerce_pd_org_active_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    def is_currently_valid(self) -> bool:
+        if not self.is_active:
+            return False
+        now = timezone.now()
+        return self.start_time <= now <= self.end_time
+
+    def apply_to_price(self, base_price: Decimal) -> Decimal:
+        if self.discount_type == self.TYPE_PERCENT and self.discount_percentage is not None:
+            pct = min(self.discount_percentage, Decimal("100"))
+            return (base_price * (Decimal("100") - pct) / Decimal("100")).quantize(
+                Decimal("1")
+            )
+        if self.discount_type == self.TYPE_FIXED and self.discount_amount_cop is not None:
+            return max(base_price - self.discount_amount_cop, Decimal("0")).quantize(
+                Decimal("1")
+            )
+        if self.discount_type == self.TYPE_PRICE and self.discount_price is not None:
+            return min(self.discount_price, base_price).quantize(Decimal("1"))
+        return base_price
 
 
 class ShopOrder(TimeStampedModel):

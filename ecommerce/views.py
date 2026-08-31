@@ -12,7 +12,7 @@ from rest_framework.exceptions import APIException
 from rest_framework.permissions import AllowAny, IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 
-from ecommerce.models import Category, Discount, Product, ShopOrder, ShopOrderItem
+from ecommerce.models import Category, Discount, Product, ProductDiscount, ShopOrder, ShopOrderItem, SubCategory
 from ecommerce.serializers import (
     CategorySerializer,
     CheckoutSerializer,
@@ -21,6 +21,7 @@ from ecommerce.serializers import (
     ProductListSerializer,
     ProductWriteSerializer,
     ShopOrderSerializer,
+    SubCategorySerializer,
 )
 from ecommerce.services import (
     categories_cache_key,
@@ -100,19 +101,34 @@ def _request_org(request):
 
 class ProductFilter(filters.FilterSet):
     category = filters.CharFilter(field_name="category__slug")
+    subcategory = filters.CharFilter(field_name="subcategory__slug")
     min_price = filters.NumberFilter(field_name="price_cop", lookup_expr="gte")
     max_price = filters.NumberFilter(field_name="price_cop", lookup_expr="lte")
     featured = filters.BooleanFilter(field_name="is_featured")
     in_stock = filters.BooleanFilter(method="filter_in_stock")
+    flash_sale = filters.BooleanFilter(method="filter_flash_sale")
 
     class Meta:
         model = Product
-        fields = ["category", "min_price", "max_price", "featured"]
+        fields = ["category", "subcategory", "min_price", "max_price", "featured"]
 
     def filter_in_stock(self, queryset, name, value):
         if value:
             return queryset.filter(stock__gt=0)
         return queryset
+
+    def filter_flash_sale(self, queryset, name, value):
+        if not value:
+            return queryset
+        from django.utils import timezone as tz
+
+        now = tz.now()
+        return queryset.filter(
+            product_discounts__is_active=True,
+            product_discounts__is_flash_sale=True,
+            product_discounts__start_time__lte=now,
+            product_discounts__end_time__gte=now,
+        ).distinct()
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -197,6 +213,37 @@ class CategoryViewSet(viewsets.ModelViewSet):
         invalidate_catalog_cache(org_id)
 
 
+class SubCategoryViewSet(viewsets.ModelViewSet):
+    serializer_class = SubCategorySerializer
+    permission_classes = [PublicReadManagerWrite, IsManagerOfOrganization]
+    lookup_field = "slug"
+    search_fields = ["name", "description"]
+    ordering_fields = ["sort_order", "name", "created_at"]
+    ordering = ["sort_order", "name"]
+
+    def get_queryset(self):
+        qs = SubCategory.objects.select_related("organization", "category")
+        org = _request_org(self.request)
+        if org:
+            qs = qs.filter(organization=org)
+        category_slug = self.request.query_params.get("category")
+        if category_slug:
+            qs = qs.filter(category__slug=category_slug)
+        if self.action in ("list", "retrieve"):
+            qs = qs.filter(is_active=True)
+        return qs
+
+    def perform_create(self, serializer):
+        org = resolve_request_organization(self.request)
+        if not org:
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError(
+                {"detail": "No se pudo resolver la organización (cabecera X-Tenant)."}
+            )
+        serializer.save(organization=org)
+
+
 class ProductViewSet(viewsets.ModelViewSet):
     permission_classes = [PublicReadManagerWrite, IsManagerOfOrganization]
     lookup_field = "slug"
@@ -214,7 +261,9 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         try:
-            qs = Product.objects.select_related("category", "organization")
+            qs = Product.objects.select_related(
+                "category", "subcategory", "organization"
+            ).prefetch_related("product_discounts")
             org = _request_org(self.request)
             if org:
                 qs = qs.filter(organization=org)
