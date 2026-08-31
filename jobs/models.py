@@ -1,8 +1,9 @@
+import uuid
 from datetime import timedelta
 from django.db import models
 from django.utils import timezone
 from django.core.validators import FileExtensionValidator
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, pre_delete
 from django.dispatch import receiver
 from django.db.models import F
 from core.models import TimeStampedModel
@@ -61,9 +62,15 @@ class JobOffer(TimeStampedModel):
     # Skills/Palabras clave (JSON para flexibilidad)
     skills = models.JSONField(default=list, blank=True)
 
+    # Ofertas externas (postulación en sitio de terceros)
+    is_external = models.BooleanField(default=False, db_index=True)
+    external_apply_url = models.URLField(max_length=2048, blank=True, null=True)
+
     # Fechas importantes
     posted_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField()
+    expires_at = models.DateTimeField(
+        help_text="Caduca automáticamente 30 días después de la creación si no se indica otra fecha."
+    )
     is_active = models.BooleanField(default=True, db_index=True)
     is_featured = models.BooleanField(default=False)
 
@@ -90,15 +97,16 @@ class JobOffer(TimeStampedModel):
             models.Index(fields=["organization", "is_active", "expires_at"]),
             models.Index(fields=["skills"]),
             models.Index(fields=["job_type", "location"]),
+            models.Index(fields=["is_external", "expires_at"]),
         ]
 
     def __str__(self):
         return f"{self.title} - {self.company_name}"
 
     def save(self, *args, **kwargs):
-        # Si es nuevo, setear expiración a 30 días
         if not self.expires_at:
-            self.expires_at = timezone.now() + timedelta(days=30)
+            base = self.created_at or timezone.now()
+            self.expires_at = base + timedelta(days=30)
         super().save(*args, **kwargs)
 
     @property
@@ -130,13 +138,15 @@ class JobApplication(TimeStampedModel):
         User, on_delete=models.CASCADE, related_name="job_applications"
     )
 
-    # CV del usuario (PDF, máx 1MB)
+    # CV del usuario (PDF, máx 1MB). Opcional para postulaciones externas.
     cv_file = models.FileField(
         upload_to="cvs/%Y/%m/",
         validators=[
             FileExtensionValidator(allowed_extensions=["pdf"]),
         ],
         help_text="PDF máximo 1MB",
+        blank=True,
+        null=True,
     )
     # Mensaje opcional del postulante
     cover_letter = models.TextField(blank=True)
@@ -148,6 +158,7 @@ class JobApplication(TimeStampedModel):
         ("rejected", "Rechazado"),
         ("hired", "Contratado"),
         ("shortlisted", "Preseleccionar"),
+        ("redirected", "Redirigida / Aplicada externamente"),
     ]
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     # Notas del reclutador
@@ -177,6 +188,59 @@ class JobApplication(TimeStampedModel):
             raise models.ValidationError("Esta oferta ha expirado.")
 
 
+class JobOfferHistory(models.Model):
+    """
+    Traza analítica (big data) de vacantes: sobrevive a la depuración de JobOffer.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    original_job_id = models.UUIDField(unique=True, db_index=True)
+    title = models.CharField(max_length=255)
+    company_name = models.CharField(max_length=255)
+    published_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="job_offer_history",
+    )
+    created_at = models.DateTimeField(db_index=True)
+    expired_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    is_external = models.BooleanField(default=False, db_index=True)
+    external_apply_url = models.URLField(max_length=2048, blank=True, null=True)
+    total_applications_count = models.IntegerField(default=0)
+    metadata = models.JSONField(default=dict, blank=True)
+    is_purged = models.BooleanField(default=False, db_index=True)
+    recorded_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "job_offer_history"
+        ordering = ["-created_at"]
+        verbose_name = "Historial de oferta"
+        verbose_name_plural = "Historial de ofertas"
+        indexes = [
+            models.Index(fields=["is_external", "created_at"]),
+            models.Index(fields=["is_purged", "expired_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.title} ({self.original_job_id})"
+
+
+@receiver(post_save, sender=JobOffer)
+def sync_job_offer_history(sender, instance, **kwargs):
+    from .services import upsert_job_offer_history
+
+    upsert_job_offer_history(instance)
+
+
+@receiver(pre_delete, sender=JobOffer)
+def snapshot_job_offer_history_on_delete(sender, instance, **kwargs):
+    from .services import upsert_job_offer_history
+
+    upsert_job_offer_history(instance, is_purged=True)
+
+
 @receiver(post_save, sender=JobApplication)
 def update_application_count(sender, instance, created, **kwargs):
     if created:
@@ -185,3 +249,8 @@ def update_application_count(sender, instance, created, **kwargs):
         JobOffer.objects.filter(id=instance.offer.id).update(
             applications_count=F("applications_count") + 1
         )
+        offer = JobOffer.objects.filter(id=instance.offer.id).first()
+        if offer:
+            from .services import upsert_job_offer_history
+
+            upsert_job_offer_history(offer)

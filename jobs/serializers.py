@@ -1,7 +1,7 @@
 from rest_framework import serializers
 # from django.utils import timezone
 
-from .models import JobOffer, JobApplication
+from .models import JobOffer, JobApplication, JobOfferHistory
 
 
 class JobOfferListSerializer(serializers.ModelSerializer):
@@ -33,6 +33,8 @@ class JobOfferListSerializer(serializers.ModelSerializer):
             "applications_count",
             "posted_by_name",
             "views_count",
+            "is_external",
+            "external_apply_url",
         ]
 
 
@@ -82,6 +84,11 @@ class JobOfferCreateUpdateSerializer(serializers.ModelSerializer):
         allow_blank=True,
         allow_null=True,
     )
+    expires_at = serializers.DateTimeField(
+        required=False,
+        allow_null=True,
+        input_formats=["iso-8601", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"],
+    )
 
     class Meta:
         model = JobOffer
@@ -101,6 +108,9 @@ class JobOfferCreateUpdateSerializer(serializers.ModelSerializer):
             "currency",
             "skills",
             "is_featured",
+            "is_external",
+            "external_apply_url",
+            "expires_at",
         ]
         # Opcional: excluir company_name de los campos requeridos
         extra_kwargs = {
@@ -110,8 +120,15 @@ class JobOfferCreateUpdateSerializer(serializers.ModelSerializer):
                 "allow_blank": True,
                 "allow_null": True,
             },
-            "category": {"required": False, "allow_blank": True},  # ← AGREGAR
+            "category": {"required": False, "allow_blank": True},
             "benefits": {"required": False},
+            "is_external": {"required": False},
+            "external_apply_url": {
+                "required": False,
+                "allow_blank": True,
+                "allow_null": True,
+            },
+            "expires_at": {"required": False},
         }
 
     def validate_skills(self, value):
@@ -123,10 +140,27 @@ class JobOfferCreateUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        """Validación general: asignar company_name si no viene"""
+        """Validación general: asignar company_name si no viene; URL externa obligatoria."""
         if not data.get("company_name"):
-            # Esto se completará en perform_create, pero evita el error de validación
-            data["company_name"] = ""  # Placeholder temporal
+            data["company_name"] = ""
+        if not data.get("expires_at"):
+            data.pop("expires_at", None)
+        is_external = data.get("is_external")
+        if is_external is None and self.instance is not None:
+            is_external = self.instance.is_external
+        url = data.get("external_apply_url")
+        if url is None and self.instance is not None:
+            url = self.instance.external_apply_url
+        if is_external and not url:
+            raise serializers.ValidationError(
+                {
+                    "external_apply_url": (
+                        "La URL de postulación es obligatoria para ofertas externas."
+                    )
+                }
+            )
+        if is_external is False:
+            data["external_apply_url"] = None
         return data
 
 
@@ -171,6 +205,10 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             "recruiter_notes",
             "applied_at",
         ]
+        extra_kwargs = {
+            "cv_file": {"required": False, "allow_null": True},
+            "cover_letter": {"required": False, "allow_blank": True},
+        }
 
     def validate_csv_file(self, value):
         """Validar que el CV no exceda 1MB"""
@@ -206,3 +244,37 @@ class JobApplicationUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = JobApplication
         fields = ["status", "recruiter_notes"]
+
+
+class JobOfferHistorySerializer(serializers.ModelSerializer):
+    published_by_name = serializers.CharField(
+        source="published_by.full_name", read_only=True, default=""
+    )
+    published_by_email = serializers.CharField(
+        source="published_by.email", read_only=True, default=""
+    )
+    offer_type = serializers.SerializerMethodField()
+
+    class Meta:
+        model = JobOfferHistory
+        fields = [
+            "id",
+            "original_job_id",
+            "title",
+            "company_name",
+            "published_by",
+            "published_by_name",
+            "published_by_email",
+            "created_at",
+            "expired_at",
+            "is_external",
+            "offer_type",
+            "external_apply_url",
+            "total_applications_count",
+            "metadata",
+            "is_purged",
+            "recorded_at",
+        ]
+
+    def get_offer_type(self, obj):
+        return "Externa" if obj.is_external else "Interna"

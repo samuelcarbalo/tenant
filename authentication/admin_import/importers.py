@@ -202,6 +202,11 @@ def import_jobs(*, rows: list[dict], organization, user) -> ImportResult:
             from datetime import timedelta
 
             expires = timezone.now() + timedelta(days=30)
+        is_external = cell_bool(row, "is_external")
+        external_url = cell_str(row, "external_apply_url")
+        if is_external and not external_url:
+            result.add_error(r, "external_apply_url es obligatorio cuando is_external es SÍ")
+            continue
         try:
             JobOffer.objects.create(
                 organization=organization,
@@ -218,6 +223,8 @@ def import_jobs(*, rows: list[dict], organization, user) -> ImportResult:
                 salary_max=_parse_decimal(row.get("salary_max")),
                 expires_at=expires,
                 is_active=True,
+                is_external=is_external,
+                external_apply_url=external_url or None,
             )
             result.created += 1
         except Exception as exc:  # noqa: BLE001

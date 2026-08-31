@@ -41,7 +41,8 @@ class JobOfferViewSet(viewsets.ModelViewSet):
         "is_active",
         "organization",
         "category",
-    ]  # ← AGREGAR category
+        "is_external",
+    ]
     search_fields = ["title", "company_name", "description", "skills", "category"]
     ordering_fields = ["posted_at", "salary_min", "applications_count"]
 
@@ -205,35 +206,67 @@ class JobOfferViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def apply(self, request, pk=None):
-        """Postularse a una oferta"""
+        """Postularse a una oferta (interna o redirección externa)."""
         offer = self.get_object()
 
-        # Verificar que no esté expirada
         if offer.is_expired:
             return Response(
                 {"error": "Esta oferta ha expirado."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Verificar que no haya postulado ya
-        if offer.applications.filter(applicant=request.user).exists():
+
+        existing = offer.applications.filter(applicant=request.user).first()
+
+        if offer.is_external:
+            if not offer.external_apply_url:
+                return Response(
+                    {"error": "Esta oferta externa no tiene URL de postulación."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if existing:
+                return Response(
+                    {
+                        "success": True,
+                        "redirected": True,
+                        "already_applied": True,
+                        "message": "Postulación externa ya registrada. Redirigiendo al sitio de la empresa.",
+                        "external_apply_url": offer.external_apply_url,
+                        "application_status": existing.status,
+                    }
+                )
+            application = JobApplication.objects.create(
+                offer=offer,
+                applicant=request.user,
+                status="redirected",
+                cover_letter="",
+            )
+            return Response(
+                {
+                    "success": True,
+                    "redirected": True,
+                    "already_applied": False,
+                    "message": "Postulación registrada como redirigida / aplicada externamente.",
+                    "external_apply_url": offer.external_apply_url,
+                    "application_status": application.status,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        if existing:
             return Response(
                 {"error": "Ya te has postulado a esta oferta."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Crear postulación
         serializer = JobApplicationSerializer(
             data=request.data, context={"request": request}
         )
         serializer.is_valid(raise_exception=True)
         serializer.save(offer=offer, applicant=request.user)
 
-        # Incrementar contador
-        # offer.applications_count += 1
-        # offer.save()
-
         return Response(
             {
                 "success": True,
+                "redirected": False,
                 "message": "Postulación enviada exitosamente.",
                 "application": serializer.data,
             },
