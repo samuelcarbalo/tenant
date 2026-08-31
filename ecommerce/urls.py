@@ -6,10 +6,12 @@ from ecommerce.views import (
     DiscountViewSet,
     ProductViewSet,
     ShopOrderViewSet,
+    SubCategoryViewSet,
 )
 
 router = DefaultRouter()
 router.register(r"categories", CategoryViewSet, basename="shop-category")
+router.register(r"subcategories", SubCategoryViewSet, basename="shop-subcategory")
 router.register(r"products", ProductViewSet, basename="shop-product")
 router.register(r"discounts", DiscountViewSet, basename="shop-discount")
 router.register(r"orders", ShopOrderViewSet, basename="shop-order")

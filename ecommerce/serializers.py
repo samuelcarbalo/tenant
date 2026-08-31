@@ -1,6 +1,7 @@
+from django.utils import timezone
 from rest_framework import serializers
 
-from ecommerce.models import Category, Discount, Product, ShopOrder, ShopOrderItem
+from ecommerce.models import Category, Discount, Product, ProductDiscount, ShopOrder, ShopOrderItem, SubCategory
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -18,9 +19,31 @@ class CategorySerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "slug", "created_at"]
 
 
+class SubCategorySerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True)
+
+    class Meta:
+        model = SubCategory
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "description",
+            "sort_order",
+            "category",
+            "category_name",
+            "is_active",
+            "created_at",
+        ]
+        read_only_fields = ["id", "slug", "created_at"]
+
+
 class ProductListSerializer(serializers.ModelSerializer):
     category_name = serializers.SerializerMethodField()
     category_slug = serializers.SerializerMethodField()
+    subcategory_name = serializers.SerializerMethodField()
+    subcategory_slug = serializers.SerializerMethodField()
+    active_discount = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -38,6 +61,10 @@ class ProductListSerializer(serializers.ModelSerializer):
             "category",
             "category_name",
             "category_slug",
+            "subcategory",
+            "subcategory_name",
+            "subcategory_slug",
+            "active_discount",
             "created_at",
         ]
 
@@ -48,6 +75,43 @@ class ProductListSerializer(serializers.ModelSerializer):
     def get_category_slug(self, obj):
         category = getattr(obj, "category", None)
         return getattr(category, "slug", None) if category is not None else None
+
+    def get_subcategory_name(self, obj):
+        sub = getattr(obj, "subcategory", None)
+        return getattr(sub, "name", None) if sub is not None else None
+
+    def get_subcategory_slug(self, obj):
+        sub = getattr(obj, "subcategory", None)
+        return getattr(sub, "slug", None) if sub is not None else None
+
+    def get_active_discount(self, obj):
+        now = timezone.now()
+        qs = getattr(obj, "product_discounts", None)
+        if qs is None:
+            return None
+        discount = (
+            qs.filter(is_active=True, start_time__lte=now, end_time__gte=now)
+            .order_by("-start_time")
+            .first()
+        )
+        if not discount:
+            return None
+        return {
+            "id": str(discount.id),
+            "name": discount.name,
+            "discount_type": discount.discount_type,
+            "discount_percentage": (
+                str(discount.discount_percentage)
+                if discount.discount_percentage is not None
+                else None
+            ),
+            "discount_price": (
+                str(discount.discount_price) if discount.discount_price is not None else None
+            ),
+            "start_time": discount.start_time.isoformat(),
+            "end_time": discount.end_time.isoformat(),
+            "is_flash_sale": discount.is_flash_sale,
+        }
 
 
 class ProductDetailSerializer(ProductListSerializer):
@@ -71,6 +135,7 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "is_featured",
             "is_published",
             "category",
+            "subcategory",
             "is_active",
         ]
         extra_kwargs = {"slug": {"required": False, "allow_blank": True}}
