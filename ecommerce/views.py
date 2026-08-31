@@ -101,6 +101,7 @@ def _request_org(request):
 
 class ProductFilter(filters.FilterSet):
     category = filters.CharFilter(field_name="category__slug")
+    category_id = filters.UUIDFilter(field_name="category_id")
     subcategory = filters.CharFilter(field_name="subcategory__slug")
     min_price = filters.NumberFilter(field_name="price_cop", lookup_expr="gte")
     max_price = filters.NumberFilter(field_name="price_cop", lookup_expr="lte")
@@ -110,7 +111,7 @@ class ProductFilter(filters.FilterSet):
 
     class Meta:
         model = Product
-        fields = ["category", "subcategory", "min_price", "max_price", "featured"]
+        fields = ["category", "category_id", "subcategory", "min_price", "max_price", "featured"]
 
     def filter_in_stock(self, queryset, name, value):
         if value:
