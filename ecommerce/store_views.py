@@ -1,5 +1,6 @@
 """API pública de lectura / staff-only de escritura para el logo de tienda."""
 
+from django.db import OperationalError, ProgrammingError
 from rest_framework import status
 from rest_framework.permissions import SAFE_METHODS, BasePermission, IsAuthenticated
 from rest_framework.response import Response
@@ -8,6 +9,9 @@ from rest_framework.views import APIView
 from core.permissions import resolve_request_organization
 from ecommerce.models import StoreSettings
 from ecommerce.store_serializers import StoreSettingsSerializer
+
+_TABLE_MISSING = "La tabla de configuración aún no existe en la base de datos."
+_EMPTY_SETTINGS = {"id": None, "store_logo": "", "updated_at": None}
 
 
 class IsStaffWriteOrPublicRead(BasePermission):
@@ -36,10 +40,16 @@ def _get_or_create_settings(request, *, create: bool):
             {"detail": "No hay organización activa (X-Tenant)."},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    if create:
-        settings_obj, _ = StoreSettings.objects.get_or_create(organization=org)
-        return settings_obj, None
-    return StoreSettings.objects.filter(organization=org).first(), None
+    try:
+        if create:
+            settings_obj, _ = StoreSettings.objects.get_or_create(organization=org)
+            return settings_obj, None
+        return StoreSettings.objects.filter(organization=org).first(), None
+    except (ProgrammingError, OperationalError):
+        return None, Response(
+            {"detail": _TABLE_MISSING, "store_logo": ""},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
 
 class StoreSettingsAPIView(APIView):
@@ -55,9 +65,12 @@ class StoreSettingsAPIView(APIView):
     def get(self, request):
         settings_obj, error = _get_or_create_settings(request, create=False)
         if error:
+            # Lectura pública: no tumbar la tienda si falta la tabla.
+            if error.status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+                return Response(_EMPTY_SETTINGS, status=status.HTTP_200_OK)
             return error
         if settings_obj is None:
-            return Response({"id": None, "store_logo": "", "updated_at": None})
+            return Response(_EMPTY_SETTINGS)
         return Response(StoreSettingsSerializer(settings_obj).data)
 
     def patch(self, request):
