@@ -26,7 +26,8 @@ pip install -r requirements.txt
 
 # Migraciones
 python manage.py migrate --settings=config.settings.development
-python manage.py migrate --settings=config.settings.production
+# En producción (Render) solo aplicar, nunca makemigrations:
+# python manage.py migrate --settings=config.settings.production
 
 # Servidor HTTP
 python manage.py runserver --settings=config.settings.development
@@ -240,12 +241,13 @@ python scripts/smoke_test_api.py
 ## Comandos útiles
 
 ```bash
-# Crear migraciones
+# Crear migraciones (solo desarrollo — genera 000X_*.py)
 python manage.py makemigrations --settings=config.settings.development
 python manage.py migrate --settings=config.settings.development
-# produccion
-python manage.py makemigrations --settings=config.settings.production
+
+# Producción / Render: aplicar las migraciones ya commiteadas (nunca makemigrations)
 python manage.py migrate --settings=config.settings.production
+python manage.py collectstatic --noinput --settings=config.settings.production
 
 # Superusuario
 python manage.py createsuperuser --settings=config.settings.development
@@ -263,7 +265,7 @@ python manage.py showmigrations --settings=config.settings.development
 D:
 cd D:\app_multi_tenant\tenant
 git add .
-git commit -m "mensaje"
+git commit -m "api rest optimized"
 git push origin test
 ```
 

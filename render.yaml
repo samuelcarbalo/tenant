@@ -3,15 +3,29 @@ services:
     name: tenant-api
     runtime: python
     plan: free
-    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput --clear && python manage.py migrate --noinput && python manage.py migrate ecommerce --noinput && python manage.py ensure_ecommerce_schema"
-    # También en pre-deploy por si el build no tiene DB (Blueprint)
-    preDeployCommand: "python manage.py migrate --noinput && python manage.py migrate ecommerce --noinput && python manage.py ensure_ecommerce_schema"
-    startCommand: "python manage.py migrate --noinput && python manage.py migrate ecommerce --noinput && python manage.py ensure_ecommerce_schema && python manage.py seed_superuser && daphne -b 0.0.0.0 -p $PORT config.asgi:application"
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate --settings=config.settings.production"
+    # Aplicar migraciones existentes (nunca makemigrations en Render)
+    preDeployCommand: "python manage.py migrate --noinput --settings=config.settings.production && python manage.py ensure_ecommerce_schema"
+    startCommand: "python manage.py migrate --noinput --settings=config.settings.production && python manage.py ensure_ecommerce_schema && python manage.py seed_superuser && daphne -b 0.0.0.0 -p $PORT config.asgi:application"
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production
       - key: PYTHON_VERSION
         value: 3.12
+      - key: EMAIL_BACKEND
+        value: django.core.mail.backends.smtp.EmailBackend
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_USE_TLS
+        value: "True"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: DEFAULT_FROM_EMAIL
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_URL
