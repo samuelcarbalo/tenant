@@ -7,6 +7,7 @@ from ecommerce.models import (
     ProductDiscount,
     ShopOrder,
     ShopOrderItem,
+    StoreSettings,
     SubCategory,
 )
 
@@ -87,6 +88,12 @@ class DiscountAdmin(admin.ModelAdmin):
     )
     list_filter = ("discount_type", "is_active", "organization")
     search_fields = ("code", "name")
+
+
+@admin.register(StoreSettings)
+class StoreSettingsAdmin(admin.ModelAdmin):
+    list_display = ("organization", "store_logo", "updated_at")
+    search_fields = ("organization__name", "organization__slug")
 
 
 @admin.register(ShopOrder)
