@@ -100,9 +100,15 @@ class Command(BaseCommand):
             self.stdout.write(f"django_migrations: jobs.{JOBS_0005} marcada como aplicada")
 
     def _assert_schema(self, job_offer_model):
+        from jobs.models import JobOfferHistory
+
         cols = self._table_columns(job_offer_model._meta.db_table)
         missing = [c for c in REQUIRED_JOB_OFFER_COLUMNS if c not in cols]
+        tables = set(connection.introspection.table_names())
+        history_table = JobOfferHistory._meta.db_table
+        if history_table not in tables:
+            missing.append(history_table)
         if missing:
             raise SystemExit(
-                f"ensure_jobs_schema falló; siguen faltando en job_offers: {missing}"
+                f"ensure_jobs_schema falló; siguen faltando: {missing}"
             )
