@@ -34,8 +34,9 @@ CHANNEL_LAYERS = {
     },
 }
 
-# Email backend de consola
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+# Email: SMTP real si hay credenciales en .env; si no, consola (flujo local).
+if not (os.getenv("EMAIL_HOST_USER") and os.getenv("EMAIL_HOST_PASSWORD")):
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
 # Throttling más permisivo en desarrollo (evita bloqueos tras pruebas intensivas)
 REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {

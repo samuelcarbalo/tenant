@@ -125,16 +125,12 @@ if _wn not in MIDDLEWARE:  # noqa: F405
     except ValueError:
         MIDDLEWARE.insert(0, _wn)  # noqa: F405
 
-# ── Email (SMTP real) ───────────────────────────────────────────────────────
+# ── Email (SMTP real; variables en base.py / .env) ──────────────────────────
+# En producción nunca usar consola, aunque falten credenciales: el envío fallará
+# de forma visible en logs en lugar de fingir éxito.
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend"
 )
-EMAIL_HOST = os.getenv("EMAIL_HOST", "")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-EMAIL_USE_TLS = _env_bool("EMAIL_USE_TLS", True)
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@localhost")
 
 # ── Seguridad HTTPS ─────────────────────────────────────────────────────────
 # Detrás de un proxy/balanceador que hace TLS (nginx, traefik, load balancer):
