@@ -42,6 +42,8 @@ urlpatterns = [
     path("api/v1/events/", include("events.urls")),
     path("api/v1/contact/", include("contact.urls")),
     path("api/v1/ecommerce/", include("ecommerce.urls")),
+    path("api/v1/store/", include(("ecommerce.store_urls", "store"), namespace="store")),
+    path("api/store/", include(("ecommerce.store_urls", "store"), namespace="store_alias")),
 ]
 if settings.DEBUG:
     from django.conf.urls.static import static

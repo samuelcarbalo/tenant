@@ -415,3 +415,22 @@ class ShopOrderItem(models.Model):
         if not self.id:
             self.id = _uuid.uuid4()
         super().save(*args, **kwargs)
+
+
+class StoreSettings(TimeStampedModel):
+    """Configuración visual de la tienda (un registro por organización)."""
+
+    organization = models.OneToOneField(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="store_settings",
+    )
+    store_logo = models.URLField(blank=True, max_length=500)
+
+    class Meta:
+        db_table = "ecommerce_store_settings"
+        verbose_name = "Configuración de tienda"
+        verbose_name_plural = "Configuraciones de tienda"
+
+    def __str__(self):
+        return f"Store settings ({self.organization_id})"
