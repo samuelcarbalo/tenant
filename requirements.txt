@@ -50,7 +50,8 @@ gunicorn>=21.2.0
 # --- Static files (producción) ---
 whitenoise>=6.6.0              # Servir static files sin nginx
 
-# --- Email HTTP (Render Free bloquea SMTP 587/465; Resend/SendGrid por HTTPS) ---
+# --- Email HTTP (Render Free bloquea SMTP 587/465; Resend por HTTPS :443) ---
+resend>=2.0.0
 django-anymail[resend]>=10.3
 
 # =============================================================================

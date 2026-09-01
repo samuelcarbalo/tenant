@@ -6,28 +6,23 @@ import logging
 
 from django.conf import settings
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
-from django.core.mail import EmailMultiAlternatives
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+
+from core.email import resend_is_configured, send_system_email
 
 logger = logging.getLogger(__name__)
 token_generator = PasswordResetTokenGenerator()
 
 
 def smtp_is_configured() -> bool:
-    backend = getattr(settings, "EMAIL_BACKEND", "") or ""
-    if "anymail" in backend or "mail_backends" in backend:
-        anymail = getattr(settings, "ANYMAIL", None) or {}
-        return bool(
-            getattr(settings, "RESEND_API_KEY", "")
-            or getattr(settings, "SENDGRID_API_KEY", "")
-            or anymail.get("RESEND_API_KEY")
-            or anymail.get("SENDGRID_API_KEY")
-        )
+    if resend_is_configured():
+        return True
     return bool(
         getattr(settings, "EMAIL_HOST", "")
         and getattr(settings, "EMAIL_HOST_USER", "")
         and getattr(settings, "EMAIL_HOST_PASSWORD", "")
+        and getattr(settings, "DEBUG", False)
     )
 
 
@@ -58,8 +53,8 @@ def send_password_reset_email(user) -> bool:
     reset_url = build_password_reset_url(user)
     if not smtp_is_configured():
         logger.error(
-            "Correo no configurado: define SMTP (EMAIL_HOST_USER + "
-            "EMAIL_HOST_PASSWORD) o RESEND_API_KEY. No se envió el correo."
+            "Correo no configurado: define RESEND_API_KEY en Render. "
+            "SMTP está bloqueado (puertos 587/465). No se envió el correo."
         )
         if getattr(settings, "DEBUG", False):
             logger.warning("Enlace de restablecimiento (DEBUG): %s", reset_url)
@@ -80,13 +75,11 @@ def send_password_reset_email(user) -> bool:
     <p><a href="{reset_url}">Restablecer contraseña</a></p>
     <p>El enlace caduca en 24 horas. Si no fuiste tú, ignora este mensaje.</p>
     """
-    message = EmailMultiAlternatives(
-        subject=subject,
-        body=text,
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        to=[user.email],
+    send_system_email(
+        subject,
+        text,
+        [user.email],
+        html=html,
     )
-    message.attach_alternative(html, "text/html")
-    message.send(fail_silently=False)
     logger.info("password_reset_email_sent to %s", user.email)
     return True
