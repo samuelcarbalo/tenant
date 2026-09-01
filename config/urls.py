@@ -6,6 +6,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from payments.views import mercadopago_webhook
 from config.email_debug import test_email_view
+from core.views import test_email_api
 
 
 def health_check(request):
@@ -23,7 +24,8 @@ def api_root(request):
                 "auth": "/api/v1/auth/",
                 "profiles": "/api/v1/profiles/",
                 "organizations": "/api/v1/organizations/",
-                "test_email": "/api/test-email/",
+                "test_email": "/api/v1/test-email/",
+                "test_email_legacy": "/api/test-email/",
             },
         }
     )
@@ -33,6 +35,7 @@ urlpatterns = [
     path("", health_check, name="health_check"),
     path("api/", api_root, name="api-root"),
     path("api/test-email/", test_email_view, name="test-email"),
+    path("api/v1/test-email/", test_email_api, name="test-email-v1"),
     path("admin/", admin.site.urls),
     path("api/v1/auth/", include("authentication.urls")),
     path("api/v1/admin/", include("authentication.admin_urls")),
