@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import timedelta
 from django.db import models
@@ -9,6 +10,8 @@ from django.db.models import F
 from core.models import TimeStampedModel
 from organizations.models import Organization
 from authentication.models import User
+
+logger = logging.getLogger(__name__)
 
 
 class JobOffer(TimeStampedModel):
@@ -231,14 +234,20 @@ class JobOfferHistory(models.Model):
 def sync_job_offer_history(sender, instance, **kwargs):
     from .services import upsert_job_offer_history
 
-    upsert_job_offer_history(instance)
+    try:
+        upsert_job_offer_history(instance)
+    except Exception:
+        logger.exception("No se pudo sincronizar el historial de la oferta %s", instance.pk)
 
 
 @receiver(pre_delete, sender=JobOffer)
 def snapshot_job_offer_history_on_delete(sender, instance, **kwargs):
     from .services import upsert_job_offer_history
 
-    upsert_job_offer_history(instance, is_purged=True)
+    try:
+        upsert_job_offer_history(instance, is_purged=True)
+    except Exception:
+        logger.exception("No se pudo snapshotear el historial de la oferta %s", instance.pk)
 
 
 @receiver(post_save, sender=JobApplication)
