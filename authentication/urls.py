@@ -10,6 +10,7 @@ from .views import (
     users_count,
     create_platform_superuser,
     password_reset_request,
+    password_reset_confirm,
 )
 from django.views.decorators.csrf import csrf_exempt
 
@@ -31,6 +32,11 @@ urlpatterns = [
         'password/reset-request/',
         csrf_exempt(password_reset_request),
         name='password_reset_request',
+    ),
+    path(
+        'password/reset-confirm/',
+        csrf_exempt(password_reset_confirm),
+        name='password_reset_confirm',
     ),
 
     # Registration

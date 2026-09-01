@@ -270,3 +270,25 @@ class PasswordChangeSerializer(serializers.Serializer):  # Cambia a Serializer
         user.set_password(self.validated_data["new_password"])
         user.save()
         return user
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField(required=True)
+    token = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True, min_length=8)
+    new_password_confirm = serializers.CharField(required=True)
+
+    def validate(self, data):
+        if data["new_password"] != data["new_password_confirm"]:
+            raise serializers.ValidationError(
+                {"new_password_confirm": "Las contraseñas no coinciden."}
+            )
+        from authentication.emails import token_generator, user_from_uidb64
+
+        user = user_from_uidb64(data["uid"])
+        if user is None or not token_generator.check_token(user, data["token"]):
+            raise serializers.ValidationError(
+                {"token": "El enlace de restablecimiento no es válido o ya expiró."}
+            )
+        data["user"] = user
+        return data

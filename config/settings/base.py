@@ -222,3 +222,34 @@ MP_WITHDRAWAL_MAX_DAYS = int(os.getenv("MP_WITHDRAWAL_MAX_DAYS", "180"))
 TOURNAMENT_OWNER_BANNERS_ENABLED = (
     os.getenv("TOURNAMENT_OWNER_BANNERS_ENABLED", "false").lower() == "true"
 )
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# ── Email (SMTP real; credenciales en tenant/.env) ───────────────────────────
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend"
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")  # o smtp.hostinger.com
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = _env_bool("EMAIL_USE_TLS", True)
+EMAIL_USE_SSL = _env_bool("EMAIL_USE_SSL", False)
+if EMAIL_USE_SSL:
+    EMAIL_USE_TLS = False
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
+_default_from = os.getenv("DEFAULT_FROM_EMAIL", "")
+if _default_from:
+    DEFAULT_FROM_EMAIL = _default_from
+elif EMAIL_HOST_USER:
+    DEFAULT_FROM_EMAIL = f"Chéver <{EMAIL_HOST_USER}>"
+else:
+    DEFAULT_FROM_EMAIL = "Chéver <no-reply@chever.co>"
+SERVER_EMAIL = os.getenv("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
+PASSWORD_RESET_TIMEOUT = int(os.getenv("PASSWORD_RESET_TIMEOUT", str(60 * 60 * 24)))
