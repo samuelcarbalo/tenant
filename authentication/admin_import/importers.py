@@ -12,8 +12,10 @@ from django.utils.dateparse import parse_date, parse_datetime
 from django.utils.text import slugify
 
 from .parsing import (
+    JOB_TYPE_CHOICES,
     RowImportError,
     default_job_expires,
+    normalize_job_type,
     parse_bool,
     parse_optional_datetime,
     parse_optional_decimal,
@@ -206,15 +208,6 @@ def import_players(*, rows: list[dict], organization, user) -> ImportResult:
     return result
 
 
-JOB_TYPE_CHOICES = {
-    "full_time",
-    "part_time",
-    "contract",
-    "freelance",
-    "internship",
-}
-
-
 def import_jobs(*, rows: list[dict], organization, user) -> ImportResult:
     from jobs.models import JobOffer
 
@@ -270,7 +263,7 @@ def import_jobs(*, rows: list[dict], organization, user) -> ImportResult:
             except RowImportError as exc:
                 row_errors.append((exc.field, str(exc)))
 
-            job_type = cell_str(row, "job_type") or "full_time"
+            job_type = normalize_job_type(row.get("job_type"))
             if job_type not in JOB_TYPE_CHOICES:
                 row_errors.append(
                     (

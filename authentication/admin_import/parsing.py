@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
@@ -271,3 +272,46 @@ def _numeric_error(field: str, salary: bool) -> RowImportError:
     if salary:
         return RowImportError(f"El salario '{field}' debe ser un valor numérico.", field)
     return RowImportError(f"El campo '{field}' debe ser un valor numérico.", field)
+
+
+JOB_TYPE_CHOICES = {
+    "full_time",
+    "part_time",
+    "contract",
+    "freelance",
+    "internship",
+}
+
+JOB_TYPE_MAP = {
+    "tiempo completo": "full_time",
+    "medio tiempo": "part_time",
+    "contrato": "contract",
+    "prestacion de servicios": "contract",
+    "freelance": "freelance",
+    "pasantia": "internship",
+    "practicas": "internship",
+}
+
+
+def _fold_job_type(value: str) -> str:
+    nfkd = unicodedata.normalize("NFKD", value)
+    ascii_text = "".join(ch for ch in nfkd if not unicodedata.combining(ch))
+    return " ".join(ascii_text.lower().strip().split())
+
+
+def normalize_job_type(value: Any, default: str = "full_time") -> str:
+    """Mapea etiquetas en español (o el código canónico) al choice del modelo."""
+    if is_empty(value):
+        return default
+    try:
+        raw = _fold_job_type(str(value))
+    except Exception:
+        return default
+    if not raw:
+        return default
+    if raw in JOB_TYPE_CHOICES:
+        return raw
+    underscored = raw.replace(" ", "_")
+    if underscored in JOB_TYPE_CHOICES:
+        return underscored
+    return JOB_TYPE_MAP.get(raw, raw)

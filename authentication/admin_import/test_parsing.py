@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from authentication.admin_import.parsing import (
     RowImportError,
+    normalize_job_type,
     parse_bool,
     parse_optional_datetime,
     parse_optional_decimal,
@@ -73,3 +74,20 @@ class ParseDecimalTests(SimpleTestCase):
     def test_invalid_raises(self):
         with self.assertRaises(RowImportError):
             parse_optional_decimal("abc", "salary_min", salary=True)
+
+
+class NormalizeJobTypeTests(SimpleTestCase):
+    def test_spanish_labels(self):
+        self.assertEqual(normalize_job_type("Tiempo completo"), "full_time")
+        self.assertEqual(normalize_job_type("MEDIO TIEMPO"), "part_time")
+        self.assertEqual(normalize_job_type("Contrato"), "contract")
+        self.assertEqual(normalize_job_type("Prestación de servicios"), "contract")
+        self.assertEqual(normalize_job_type("Freelance"), "freelance")
+        self.assertEqual(normalize_job_type("Pasantía"), "internship")
+        self.assertEqual(normalize_job_type("Prácticas"), "internship")
+
+    def test_canonical_and_empty(self):
+        self.assertEqual(normalize_job_type("full_time"), "full_time")
+        self.assertEqual(normalize_job_type("full time"), "full_time")
+        self.assertEqual(normalize_job_type(""), "full_time")
+        self.assertEqual(normalize_job_type("remoto"), "remoto")
