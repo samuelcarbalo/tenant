@@ -50,6 +50,9 @@ gunicorn>=21.2.0
 # --- Static files (producción) ---
 whitenoise>=6.6.0              # Servir static files sin nginx
 
+# --- Email HTTP (Render Free bloquea SMTP 587/465; Resend/SendGrid por HTTPS) ---
+django-anymail[resend]>=10.3
+
 # =============================================================================
 # Opcionales (no requeridos hoy, útiles en prod)
 # =============================================================================

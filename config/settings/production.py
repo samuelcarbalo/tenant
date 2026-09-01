@@ -126,12 +126,51 @@ if _wn not in MIDDLEWARE:  # noqa: F405
     except ValueError:
         MIDDLEWARE.insert(0, _wn)  # noqa: F405
 
-# ── Email (SMTP real; variables en base.py / .env) ──────────────────────────
-# En producción nunca usar consola, aunque falten credenciales: el envío fallará
-# de forma visible en logs en lugar de fingir éxito.
+# ── Email (producción / Render) ─────────────────────────────────────────────
+# Render Free bloquea tráfico saliente a smtp.gmail.com:587 (Errno 101).
+# Por defecto usamos SMTPS 465. Si EMAIL_PORT=587 quedó en el dashboard, se
+# fuerza a 465. Si 465 también está filtrado, define RESEND_API_KEY (HTTPS).
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend"
 )
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+_email_port = int(os.getenv("EMAIL_PORT", "465") or "465")
+if _email_port == 587:
+    _email_port = 465
+EMAIL_PORT = _email_port
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "False").lower() == "true"
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "True").lower() == "true"
+if EMAIL_PORT == 465:
+    EMAIL_USE_SSL = True
+    EMAIL_USE_TLS = False
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER) or DEFAULT_FROM_EMAIL  # noqa: F405
+SERVER_EMAIL = os.getenv("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
+
+RESEND_API_KEY = (os.getenv("RESEND_API_KEY") or "").strip()
+SENDGRID_API_KEY = (os.getenv("SENDGRID_API_KEY") or "").strip()
+if RESEND_API_KEY:
+    # HTTPS: no depende de smtplib ni de los puertos 587/465.
+    try:
+        import anymail  # noqa: F401
+
+        if "anymail" not in INSTALLED_APPS:  # noqa: F405
+            INSTALLED_APPS.append("anymail")  # noqa: F405
+        EMAIL_BACKEND = "anymail.backends.resend.EmailBackend"
+        ANYMAIL = {"RESEND_API_KEY": RESEND_API_KEY}
+    except ImportError:
+        EMAIL_BACKEND = "core.mail_backends.ResendHTTPEmailBackend"
+elif SENDGRID_API_KEY:
+    try:
+        import anymail  # noqa: F401
+
+        if "anymail" not in INSTALLED_APPS:  # noqa: F405
+            INSTALLED_APPS.append("anymail")  # noqa: F405
+        EMAIL_BACKEND = "anymail.backends.sendgrid.EmailBackend"
+        ANYMAIL = {"SENDGRID_API_KEY": SENDGRID_API_KEY}
+    except ImportError:
+        pass
 
 # ── Seguridad HTTPS ─────────────────────────────────────────────────────────
 # Detrás de un proxy/balanceador que hace TLS (nginx, traefik, load balancer):

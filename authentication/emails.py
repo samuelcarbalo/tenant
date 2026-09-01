@@ -15,6 +15,15 @@ token_generator = PasswordResetTokenGenerator()
 
 
 def smtp_is_configured() -> bool:
+    backend = getattr(settings, "EMAIL_BACKEND", "") or ""
+    if "anymail" in backend or "mail_backends" in backend:
+        anymail = getattr(settings, "ANYMAIL", None) or {}
+        return bool(
+            getattr(settings, "RESEND_API_KEY", "")
+            or getattr(settings, "SENDGRID_API_KEY", "")
+            or anymail.get("RESEND_API_KEY")
+            or anymail.get("SENDGRID_API_KEY")
+        )
     return bool(
         getattr(settings, "EMAIL_HOST", "")
         and getattr(settings, "EMAIL_HOST_USER", "")
@@ -49,8 +58,8 @@ def send_password_reset_email(user) -> bool:
     reset_url = build_password_reset_url(user)
     if not smtp_is_configured():
         logger.error(
-            "SMTP no configurado: define EMAIL_HOST, EMAIL_HOST_USER y "
-            "EMAIL_HOST_PASSWORD en .env. No se envió el correo de recuperación."
+            "Correo no configurado: define SMTP (EMAIL_HOST_USER + "
+            "EMAIL_HOST_PASSWORD) o RESEND_API_KEY. No se envió el correo."
         )
         if getattr(settings, "DEBUG", False):
             logger.warning("Enlace de restablecimiento (DEBUG): %s", reset_url)

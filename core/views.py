@@ -23,6 +23,14 @@ def _smtp_config_info():
         "EMAIL_USE_SSL": getattr(settings, "EMAIL_USE_SSL", False),
         "DEFAULT_FROM_EMAIL": getattr(settings, "DEFAULT_FROM_EMAIL", None),
         "password_configured": bool(getattr(settings, "EMAIL_HOST_PASSWORD", "")),
+        "resend_configured": bool(
+            getattr(settings, "RESEND_API_KEY", "")
+            or (getattr(settings, "ANYMAIL", None) or {}).get("RESEND_API_KEY")
+        ),
+        "sendgrid_configured": bool(
+            getattr(settings, "SENDGRID_API_KEY", "")
+            or (getattr(settings, "ANYMAIL", None) or {}).get("SENDGRID_API_KEY")
+        ),
     }
 
 
