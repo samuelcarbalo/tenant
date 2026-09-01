@@ -109,6 +109,7 @@ CHANNEL_LAYERS = {
 
 # ── Archivos estáticos (WhiteNoise) ─────────────────────────────────────────
 STATIC_ROOT = BASE_DIR / "staticfiles"  # noqa: F405
+STATIC_ROOT.mkdir(parents=True, exist_ok=True)
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {

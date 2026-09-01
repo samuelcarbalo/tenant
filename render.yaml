@@ -3,10 +3,10 @@ services:
     name: tenant-api
     runtime: python
     plan: free
-    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate --settings=config.settings.production"
+    buildCommand: "mkdir -p staticfiles && pip install -r requirements.txt && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate --noinput --settings=config.settings.production"
     # Aplicar migraciones existentes (nunca makemigrations en Render)
     preDeployCommand: "python manage.py migrate --noinput --settings=config.settings.production && python manage.py ensure_ecommerce_schema"
-    startCommand: "python manage.py migrate --noinput --settings=config.settings.production && python manage.py ensure_ecommerce_schema && python manage.py seed_superuser && daphne -b 0.0.0.0 -p $PORT config.asgi:application"
+    startCommand: "mkdir -p staticfiles && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate --noinput --settings=config.settings.production && python manage.py ensure_ecommerce_schema && python manage.py seed_superuser && daphne -b 0.0.0.0 -p $PORT config.asgi:application"
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production
