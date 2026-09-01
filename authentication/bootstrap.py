@@ -49,6 +49,7 @@ def ensure_platform_superuser(email=None, password=None, username=None):
         user.is_staff = True
         user.is_active = True
         user.role = "admin"
+        user.admin_level = 1
         user.email_verified = True
         if not user.username:
             user.username = username
@@ -68,6 +69,9 @@ def ensure_platform_superuser(email=None, password=None, username=None):
     if not user.is_unlimited_credits:
         user.is_unlimited_credits = True
         changed_fields.append("is_unlimited_credits")
+    if getattr(user, "admin_level", 0) != 1:
+        user.admin_level = 1
+        changed_fields.append("admin_level")
     if not user.email_verified:
         user.email_verified = True
         changed_fields.append("email_verified")

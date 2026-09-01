@@ -29,6 +29,7 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f"Superusuario de plataforma {action}: {user.email} "
-                f"(id={user.id}, unlimited_credits={user.is_unlimited_credits})"
+                f"(id={user.id}, admin_level={user.admin_level}, "
+                f"unlimited_credits={user.is_unlimited_credits})"
             )
         )

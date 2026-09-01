@@ -213,6 +213,7 @@ def verify_token(request):
                 "id": str(user.id),
                 "email": user.email,
                 "role": user.role,
+                "admin_level": int(getattr(user, "admin_level", 0) or 0),
                 "is_superuser": user.is_superuser,
                 "is_staff": user.is_staff,
                 "credits": user.credits,

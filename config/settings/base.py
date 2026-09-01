@@ -11,6 +11,11 @@ load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 
+# Super Admin Root (Nivel 1). Usado por seed/bootstrap y la migración de admin_level.
+PLATFORM_SUPERUSER_EMAIL = (
+    os.getenv("PLATFORM_SUPERUSER_EMAIL") or "carbalosamuel@hotmail.com"
+).strip().lower()
+
 AUTHENTICATION_BACKENDS = [
     "authentication.authentication.EmailOrganizationBackend",
     "django.contrib.auth.backends.ModelBackend",  # Fallback
