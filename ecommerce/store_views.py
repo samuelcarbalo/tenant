@@ -1,6 +1,6 @@
 """API pública de lectura / staff-only de escritura para el logo de tienda."""
 
-from django.db import OperationalError, ProgrammingError
+from django.db import DatabaseError, OperationalError, ProgrammingError
 from rest_framework import status
 from rest_framework.permissions import SAFE_METHODS, BasePermission, IsAuthenticated
 from rest_framework.response import Response
@@ -11,7 +11,6 @@ from ecommerce.models import StoreSettings
 from ecommerce.store_serializers import StoreSettingsSerializer
 
 _TABLE_MISSING = "La tabla de configuración aún no existe en la base de datos."
-_EMPTY_SETTINGS = {"id": None, "store_logo": "", "updated_at": None}
 
 
 class IsStaffWriteOrPublicRead(BasePermission):
@@ -45,9 +44,9 @@ def _get_or_create_settings(request, *, create: bool):
             settings_obj, _ = StoreSettings.objects.get_or_create(organization=org)
             return settings_obj, None
         return StoreSettings.objects.filter(organization=org).first(), None
-    except (ProgrammingError, OperationalError):
+    except (ProgrammingError, OperationalError, DatabaseError):
         return None, Response(
-            {"detail": _TABLE_MISSING, "store_logo": ""},
+            {"detail": _TABLE_MISSING, "store_logo": None},
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
@@ -62,16 +61,28 @@ class StoreSettingsAPIView(APIView):
             return [IsStaffWriteOrPublicRead()]
         return [IsAuthenticated(), IsStaffWriteOrPublicRead()]
 
-    def get(self, request):
-        settings_obj, error = _get_or_create_settings(request, create=False)
-        if error:
-            # Lectura pública: no tumbar la tienda si falta la tabla.
-            if error.status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
-                return Response(_EMPTY_SETTINGS, status=status.HTTP_200_OK)
-            return error
-        if settings_obj is None:
-            return Response(_EMPTY_SETTINGS)
-        return Response(StoreSettingsSerializer(settings_obj).data)
+    def get(self, request, *args, **kwargs):
+        org = _organization(request)
+        try:
+            qs = StoreSettings.objects.all()
+            if org is not None:
+                qs = qs.filter(organization=org)
+            settings_obj = qs.first()
+            logo_url = None
+            if settings_obj and settings_obj.store_logo:
+                logo_url = settings_obj.store_logo
+            return Response(
+                {
+                    "id": str(settings_obj.id) if settings_obj else None,
+                    "store_logo": logo_url,
+                    "updated_at": settings_obj.updated_at if settings_obj else None,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except (ProgrammingError, OperationalError, DatabaseError):
+            # Retorno seguro mientras la tabla termina de crearse en PostgreSQL.
+            return Response({"store_logo": None}, status=status.HTTP_200_OK)
+
 
     def patch(self, request):
         settings_obj, error = _get_or_create_settings(request, create=True)
