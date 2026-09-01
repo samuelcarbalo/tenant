@@ -6,4 +6,5 @@ set -euo pipefail
 mkdir -p staticfiles
 pip install -r requirements.txt
 python manage.py collectstatic --noinput --settings=config.settings.production
+python manage.py migrate ecommerce --noinput --settings=config.settings.production
 python manage.py migrate --noinput --settings=config.settings.production

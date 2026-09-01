@@ -32,6 +32,15 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS("ecommerce schema OK"))
             return
 
+        # Si solo falta store_settings, crear el modelo sin borrar el historial.
+        if missing == ["ecommerce_store_settings"]:
+            from ecommerce.models import StoreSettings
+
+            with connection.schema_editor() as editor:
+                editor.create_model(StoreSettings)
+            self.stdout.write(self.style.SUCCESS("tabla ecommerce_store_settings creada"))
+            return
+
         self.stderr.write(
             self.style.WARNING(f"Tablas ecommerce faltantes: {', '.join(missing)}")
         )
