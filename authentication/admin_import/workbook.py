@@ -23,6 +23,14 @@ def build_template_workbook(module: str) -> BytesIO:
     return buf
 
 
+def _is_blank_cell(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and value.strip() == "":
+        return True
+    return False
+
+
 def read_rows(file_obj) -> tuple[list[str], list[dict[str, Any]]]:
     """
     Devuelve (headers, rows) donde cada row es dict header→valor (str limpio).
@@ -38,7 +46,7 @@ def read_rows(file_obj) -> tuple[list[str], list[dict[str, Any]]]:
     headers = [str(h).strip() if h is not None else "" for h in raw_headers]
     data: list[dict[str, Any]] = []
     for idx, raw in enumerate(rows_iter, start=2):
-        if raw is None or all(c is None or str(c).strip() == "" for c in raw):
+        if raw is None or all(_is_blank_cell(c) for c in raw):
             continue
         row: dict[str, Any] = {"_row": idx}
         for i, key in enumerate(headers):

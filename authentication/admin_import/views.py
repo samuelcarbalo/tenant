@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+from zipfile import BadZipFile
+
 from django.http import HttpResponse
+from openpyxl.utils.exceptions import InvalidFileException
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
@@ -14,6 +18,22 @@ from core.permissions import resolve_request_organization, user_is_platform_elev
 from .headers import IMPORT_MODULES, TEMPLATE_HEADERS
 from .importers import IMPORTERS
 from .workbook import build_template_workbook, read_rows
+
+logger = logging.getLogger(__name__)
+
+INVALID_EXCEL_PAYLOAD = {
+    "status": "error",
+    "message": "El archivo subido no es un documento Excel válido (.xlsx o .xls).",
+}
+
+
+def _error_response(message: str, errors: list[str] | None = None, **extra):
+    payload = {"status": "error", "message": message, "detail": message, **extra}
+    if errors is not None:
+        payload["errors"] = errors
+        if errors:
+            payload["detail"] = errors[0] if len(errors) == 1 else message
+    return Response(payload, status=status.HTTP_400_BAD_REQUEST)
 
 
 class IsPlatformAdmin(IsAdminUser):
@@ -68,56 +88,61 @@ class ImportExcelView(APIView):
 
         upload = request.FILES.get("file") or request.FILES.get("excel")
         if not upload:
-            return Response(
-                {"detail": "Adjunte el archivo Excel en el campo 'file'."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not str(upload.name).lower().endswith((".xlsx", ".xlsm")):
-            return Response(
-                {"detail": "Solo se aceptan archivos .xlsx"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response("Adjunte el archivo Excel en el campo 'file'.")
+        if not str(upload.name).lower().endswith((".xlsx", ".xlsm", ".xls")):
+            return Response(INVALID_EXCEL_PAYLOAD, status=status.HTTP_400_BAD_REQUEST)
 
         organization = resolve_request_organization(request)
         if organization is None:
-            return Response(
-                {"detail": "No se pudo resolver la organización (X-Tenant)."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response("No se pudo resolver la organización (X-Tenant).")
 
         try:
-            headers, rows = read_rows(upload)
+            try:
+                headers, rows = read_rows(upload)
+            except (BadZipFile, InvalidFileException, ValueError, KeyError, OSError) as exc:
+                logger.warning("Excel inválido en import/%s: %s", module, exc)
+                return Response(INVALID_EXCEL_PAYLOAD, status=status.HTTP_400_BAD_REQUEST)
+
+            expected = TEMPLATE_HEADERS[module]
+            missing = [h for h in expected if h not in headers]
+            if missing:
+                return _error_response(
+                    "Se encontraron errores al procesar el archivo Excel.",
+                    [
+                        f"Falta la columna '{col}' en el archivo (módulo {module})."
+                        for col in missing
+                    ],
+                    missing_headers=missing,
+                    expected_headers=expected,
+                    received_headers=headers,
+                )
+
+            importer = IMPORTERS[module]
+            result = importer(rows=rows, organization=organization, user=request.user)
         except Exception as exc:  # noqa: BLE001
-            return Response(
-                {"detail": f"No se pudo leer el Excel: {exc}"},
-                status=status.HTTP_400_BAD_REQUEST,
+            logger.exception("Fallo inesperado en import/%s", module)
+            row_index = getattr(exc, "row", None) or 1
+            detail = f"Error en la fila {row_index}: {exc}"
+            return _error_response(detail, [detail])
+
+        if result.errors:
+            return _error_response(
+                "Se encontraron errores al procesar el archivo Excel.",
+                result.formatted_errors(),
+                created=result.created,
+                updated=result.updated,
+                error_count=len(result.errors),
             )
 
-        expected = TEMPLATE_HEADERS[module]
-        missing = [h for h in expected if h not in headers]
-        if missing:
-            return Response(
-                {
-                    "detail": "Encabezados incompletos.",
-                    "missing_headers": missing,
-                    "expected_headers": expected,
-                    "received_headers": headers,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        importer = IMPORTERS[module]
-        result = importer(rows=rows, organization=organization, user=request.user)
         payload = {
-            "success": result.error_count == 0 or result.created + result.updated > 0,
+            "status": "ok",
+            "success": True,
+            "message": "Importación completada.",
             "module": module,
             "organization": getattr(organization, "slug", None),
             **result.as_dict(),
         }
-        code = status.HTTP_200_OK if payload["success"] else status.HTTP_400_BAD_REQUEST
-        if result.created or result.updated:
-            code = status.HTTP_200_OK
-        return Response(payload, status=code)
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class ImportModulesListView(APIView):
