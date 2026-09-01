@@ -1,12 +1,13 @@
-"""Diagnóstico SMTP temporal (sin Shell de Render). Quitar cuando el correo funcione."""
+"""Diagnóstico de correo temporal (sin Shell de Render)."""
 
 import traceback
 
-from django.conf import settings
 from django.core.cache import cache
-from django.core.mail import send_mail
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
+
+from core.email import send_system_email
+from core.views import _smtp_config_info
 
 TEST_RECIPIENT = "carbal087@gmail.com"
 _COOLDOWN_KEY = "smtp_test_email_cooldown"
@@ -15,35 +16,24 @@ _COOLDOWN_SECONDS = 45
 
 @require_GET
 def test_email_view(request):
-    logs = {
-        "status": "pending",
-        "smtp_host": getattr(settings, "EMAIL_HOST", "No configurado"),
-        "smtp_port": getattr(settings, "EMAIL_PORT", "No configurado"),
-        "smtp_user": getattr(settings, "EMAIL_HOST_USER", "No configurado") or "No configurado",
-        "smtp_from": getattr(settings, "DEFAULT_FROM_EMAIL", "No configurado"),
-        "smtp_backend": getattr(settings, "EMAIL_BACKEND", "No configurado"),
-        "use_tls": getattr(settings, "EMAIL_USE_TLS", False),
-        "use_ssl": getattr(settings, "EMAIL_USE_SSL", False),
-        "password_configured": bool(getattr(settings, "EMAIL_HOST_PASSWORD", "")),
-        "recipient": TEST_RECIPIENT,
-    }
+    logs = _smtp_config_info()
+    logs["recipient"] = TEST_RECIPIENT
+    logs["status"] = "pending"
 
     if cache.get(_COOLDOWN_KEY):
         logs["status"] = "throttled"
         logs["message"] = (
-            f"Espera {_COOLDOWN_SECONDS}s entre pruebas para no saturar SMTP."
+            f"Espera {_COOLDOWN_SECONDS}s entre pruebas para no saturar el envío."
         )
         return JsonResponse(logs, status=429)
 
     cache.set(_COOLDOWN_KEY, True, _COOLDOWN_SECONDS)
 
     try:
-        send_mail(
-            subject="Prueba Automática SMTP Chéver",
+        send_system_email(
+            subject="Prueba Automática Chéver (Resend HTTP)",
             message="Prueba de envío desencadenada desde el endpoint /api/test-email/.",
-            from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[TEST_RECIPIENT],
-            fail_silently=False,
         )
         logs["status"] = "success"
         logs["message"] = f"Correo enviado con éxito a {TEST_RECIPIENT}"
