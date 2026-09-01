@@ -91,3 +91,12 @@ class NormalizeJobTypeTests(SimpleTestCase):
         self.assertEqual(normalize_job_type("full time"), "full_time")
         self.assertEqual(normalize_job_type(""), "full_time")
         self.assertEqual(normalize_job_type("remoto"), "remoto")
+
+
+class TemplateSignatureTests(SimpleTestCase):
+    def test_jobs_requires_title_and_company(self):
+        from authentication.admin_import.headers import headers_match_module
+
+        self.assertTrue(headers_match_module(["title", "company_name", "description"], "jobs"))
+        self.assertFalse(headers_match_module(["name", "sku", "price_cop"], "jobs"))
+        self.assertFalse(headers_match_module(["evento", "fecha", "lugar"], "jobs"))

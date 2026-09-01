@@ -76,3 +76,19 @@ TEMPLATE_HEADERS: dict[str, list[str]] = {
         "is_active",
     ],
 }
+
+TEMPLATE_SIGNATURES: dict[str, tuple[str, ...]] = {
+    "schedule": ("tournament_slug", "home_team", "away_team"),
+    "players": ("team_name", "first_name", "last_name"),
+    "jobs": ("title", "company_name"),
+    "products": ("name", "sku", "price_cop"),
+    "discounts": ("discount_type", "start_date", "end_date"),
+}
+
+WRONG_TEMPLATE_MESSAGE = "La plantilla subida no corresponde a la categoría seleccionada."
+
+
+def headers_match_module(received: list[str], module: str) -> bool:
+    present = {str(h).strip() for h in received if h is not None and str(h).strip()}
+    keys = TEMPLATE_SIGNATURES.get(module) or tuple(TEMPLATE_HEADERS.get(module, [])[:2])
+    return all(key in present for key in keys)
