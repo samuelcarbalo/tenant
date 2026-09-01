@@ -233,7 +233,7 @@ def password_reset_request(request):
     """
     Solicitud pública de recuperación de contraseña.
     Respuesta siempre genérica (no revela si el email existe).
-    Envía el correo SMTP si hay un usuario activo coincidente.
+    Envía el correo por Resend HTTP si hay un usuario activo coincidente.
     """
     import logging
 

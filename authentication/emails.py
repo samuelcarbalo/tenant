@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from html import escape
 from django.conf import settings
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils.encoding import force_bytes, force_str
@@ -41,15 +42,24 @@ def user_from_uidb64(uidb64: str):
         return None
 
 
+def frontend_public_url() -> str:
+    """Base del frontend para enlaces en correos. En producción siempre chever.co."""
+    if not getattr(settings, "DEBUG", False):
+        return "https://chever.co"
+    raw = (getattr(settings, "FRONTEND_URL", None) or "http://localhost:5173").strip().rstrip("/")
+    if not raw or "localhost" in raw or "127.0.0.1" in raw:
+        return raw or "http://localhost:5173"
+    return raw
+
+
 def build_password_reset_url(user) -> str:
-    frontend = (getattr(settings, "FRONTEND_URL", None) or "https://chever.co").rstrip("/")
     uid = encode_uid(user)
     token = token_generator.make_token(user)
-    return f"{frontend}/recuperar-contrasena?uid={uid}&token={token}"
+    return f"{frontend_public_url()}/reset-password/{uid}/{token}/"
 
 
 def send_password_reset_email(user) -> bool:
-    """Envía el enlace de restablecimiento. False si SMTP no está listo o falla el envío."""
+    """Envía el enlace de restablecimiento por Resend HTTP. False si el correo no está listo."""
     reset_url = build_password_reset_url(user)
     if not smtp_is_configured():
         logger.error(
@@ -69,11 +79,13 @@ def send_password_reset_email(user) -> bool:
         f"{reset_url}\n\n"
         "Si no fuiste tú, puedes ignorar este mensaje.\n"
     )
+    safe_url = escape(reset_url, quote=True)
     html = f"""
-    <p>Hola {name},</p>
+    <p>Hola {escape(name)},</p>
     <p>Recibimos una solicitud para restablecer tu contraseña en <strong>Chéver</strong>.</p>
-    <p><a href="{reset_url}">Restablecer contraseña</a></p>
+    <p><a href="{safe_url}">Restablecer contraseña</a></p>
     <p>El enlace caduca en 24 horas. Si no fuiste tú, ignora este mensaje.</p>
+    <p style="word-break:break-all;font-size:12px;color:#64748b">{safe_url}</p>
     """
     send_system_email(
         subject,

@@ -34,6 +34,7 @@ def _smtp_config_info():
         "EMAIL_USE_TLS": getattr(settings, "EMAIL_USE_TLS", False),
         "EMAIL_USE_SSL": getattr(settings, "EMAIL_USE_SSL", False),
         "DEFAULT_FROM_EMAIL": getattr(settings, "DEFAULT_FROM_EMAIL", None),
+        "FRONTEND_URL": getattr(settings, "FRONTEND_URL", None),
         "resend_from": resend_from_email() if resend_is_configured() else None,
         "password_configured": bool(getattr(settings, "EMAIL_HOST_PASSWORD", "")),
         "resend_configured": resend_is_configured(),
