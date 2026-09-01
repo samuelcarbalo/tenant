@@ -1,10 +1,16 @@
 from django.contrib import admin
+from django.http import HttpResponse
 from django.urls import path, include
 from django.conf import settings
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from payments.views import mercadopago_webhook
 from config.email_debug import test_email_view
+
+
+def health_check(request):
+    """Health check de Render: GET y HEAD deben devolver 200 (no 404/405)."""
+    return HttpResponse("OK", status=200)
 
 
 @api_view(["GET"])
@@ -24,7 +30,8 @@ def api_root(request):
 
 
 urlpatterns = [
-    path("", api_root, name="api-root"),
+    path("", health_check, name="health_check"),
+    path("api/", api_root, name="api-root"),
     path("api/test-email/", test_email_view, name="test-email"),
     path("admin/", admin.site.urls),
     path("api/v1/auth/", include("authentication.urls")),

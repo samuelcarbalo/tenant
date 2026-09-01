@@ -14,6 +14,7 @@ REQUIRED_TABLES = (
     "ecommerce_discounts",
     "ecommerce_orders",
     "ecommerce_order_items",
+    "ecommerce_store_settings",
 )
 
 
@@ -21,6 +22,9 @@ class Command(BaseCommand):
     help = "Crea tablas ecommerce si faltan (repara historial de migraciones inconsistente)."
 
     def handle(self, *args, **options):
+        # Siempre aplicar migraciones pendientes (p. ej. 0003 StoreSettings).
+        call_command("migrate", "ecommerce", interactive=False, verbosity=1)
+
         existing = set(connection.introspection.table_names())
         missing = [t for t in REQUIRED_TABLES if t not in existing]
 

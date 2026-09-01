@@ -107,7 +107,7 @@ VITE_IMGBB_API_KEY=<tu-key>
 En el panel: **Settings → Build Command**. Usa `config.settings.production` (o define `DJANGO_SETTINGS_MODULE` y omite `--settings=`):
 
 ```bash
-pip install -r requirements.txt && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate --settings=config.settings.production
+pip install -r requirements.txt && mkdir -p staticfiles && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate --noinput --settings=config.settings.production
 ```
 
 `makemigrations` **no** se ejecuta en Render. Las migraciones se generan en desarrollo:
