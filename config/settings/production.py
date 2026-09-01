@@ -38,9 +38,24 @@ CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS")
 if not CORS_ALLOWED_ORIGINS:
     raise RuntimeError(
         "CORS_ALLOWED_ORIGINS es obligatorio en producción. "
-        "Ejemplo: CORS_ALLOWED_ORIGINS=https://missigdigital.site,https://https://missingdigitalback.onrender.com/"
+        "Ejemplo: CORS_ALLOWED_ORIGINS=https://chever.co,https://www.chever.co"
     )
-CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS") or CORS_ALLOWED_ORIGINS
+for _origin in ("https://chever.co", "https://www.chever.co"):
+    if _origin not in CORS_ALLOWED_ORIGINS:
+        CORS_ALLOWED_ORIGINS.append(_origin)
+CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS") or list(CORS_ALLOWED_ORIGINS)
+
+# Enlaces de correo (nunca localhost, aunque el env de Render esté mal).
+_frontend = (os.getenv("FRONTEND_URL") or "https://chever.co").strip().rstrip("/")
+if (
+    not _frontend
+    or "localhost" in _frontend
+    or "127.0.0.1" in _frontend
+):
+    _frontend = "https://chever.co"
+elif _frontend.startswith("http://") and "chever.co" in _frontend:
+    _frontend = "https://chever.co"
+FRONTEND_URL = _frontend
 
 # ── Base de datos (PostgreSQL) ──────────────────────────────────────────────
 
@@ -137,10 +152,12 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 EMAIL_USE_TLS = False
 EMAIL_USE_SSL = False
 DEFAULT_FROM_EMAIL = (
-    os.getenv("DEFAULT_FROM_EMAIL")
-    or os.getenv("RESEND_FROM_EMAIL")
-    or "Chéver <onboarding@resend.dev>"
+    os.getenv("RESEND_FROM_EMAIL")
+    or os.getenv("DEFAULT_FROM_EMAIL")
+    or "Chéver <soporte@chever.co>"
 )
+if "gmail.com" in DEFAULT_FROM_EMAIL.lower() or "googlemail.com" in DEFAULT_FROM_EMAIL.lower():
+    DEFAULT_FROM_EMAIL = "Chéver <soporte@chever.co>"
 SERVER_EMAIL = os.getenv("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
 
 RESEND_API_KEY = (os.getenv("RESEND_API_KEY") or "").strip()
