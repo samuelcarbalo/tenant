@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 
-from html import escape
 from django.conf import settings
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 
+from authentication.email_templates import password_reset_html, user_display_name
 from core.email import resend_is_configured, send_system_email
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def send_password_reset_email(user) -> bool:
             logger.warning("Enlace de restablecimiento (DEBUG): %s", reset_url)
         return False
 
-    name = getattr(user, "full_name", "") or user.email
+    name = user_display_name(user)
     subject = "Restablece tu contraseña en Chéver"
     text = (
         f"Hola {name},\n\n"
@@ -78,15 +78,9 @@ def send_password_reset_email(user) -> bool:
         "Abre este enlace (caduca en 24 horas):\n"
         f"{reset_url}\n\n"
         "Si no fuiste tú, puedes ignorar este mensaje.\n"
+        "© Chéver. Todos los derechos reservados.\n"
     )
-    safe_url = escape(reset_url, quote=True)
-    html = f"""
-    <p>Hola {escape(name)},</p>
-    <p>Recibimos una solicitud para restablecer tu contraseña en <strong>Chéver</strong>.</p>
-    <p><a href="{safe_url}">Restablecer contraseña</a></p>
-    <p>El enlace caduca en 24 horas. Si no fuiste tú, ignora este mensaje.</p>
-    <p style="word-break:break-all;font-size:12px;color:#64748b">{safe_url}</p>
-    """
+    html = password_reset_html(display_name=name, reset_url=reset_url)
     send_system_email(
         subject,
         text,
