@@ -163,6 +163,7 @@ SERVER_EMAIL = os.getenv("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
 RESEND_API_KEY = (os.getenv("RESEND_API_KEY") or "").strip()
 SENDGRID_API_KEY = (os.getenv("SENDGRID_API_KEY") or "").strip()
 ANYMAIL = {"RESEND_API_KEY": RESEND_API_KEY} if RESEND_API_KEY else {}
+EMAIL_LOGO_URL = os.getenv("EMAIL_LOGO_URL", "https://chever.co/chever_oficial.svg")
 
 # ── Seguridad HTTPS ─────────────────────────────────────────────────────────
 # Detrás de un proxy/balanceador que hace TLS (nginx, traefik, load balancer):
