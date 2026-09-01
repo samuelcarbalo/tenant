@@ -15,7 +15,7 @@ from rest_framework.views import APIView
 
 from core.permissions import resolve_request_organization, user_is_platform_elevated
 
-from .headers import IMPORT_MODULES, TEMPLATE_HEADERS
+from .headers import IMPORT_MODULES, TEMPLATE_HEADERS, WRONG_TEMPLATE_MESSAGE, headers_match_module
 from .importers import IMPORTERS
 from .workbook import build_template_workbook, read_rows
 
@@ -103,19 +103,8 @@ class ImportExcelView(APIView):
                 logger.warning("Excel inválido en import/%s: %s", module, exc)
                 return Response(INVALID_EXCEL_PAYLOAD, status=status.HTTP_400_BAD_REQUEST)
 
-            expected = TEMPLATE_HEADERS[module]
-            missing = [h for h in expected if h not in headers]
-            if missing:
-                return _error_response(
-                    "Se encontraron errores al procesar el archivo Excel.",
-                    [
-                        f"Falta la columna '{col}' en el archivo (módulo {module})."
-                        for col in missing
-                    ],
-                    missing_headers=missing,
-                    expected_headers=expected,
-                    received_headers=headers,
-                )
+            if not headers_match_module(headers, module):
+                return _error_response(WRONG_TEMPLATE_MESSAGE, [WRONG_TEMPLATE_MESSAGE])
 
             importer = IMPORTERS[module]
             result = importer(rows=rows, organization=organization, user=request.user)
