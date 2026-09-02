@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: GET /api/v1/health/
+      - name: GET /healthz
         run: |
           curl -fsS --max-time 90 \
             -o /dev/null -w "HTTP %{http_code} in %{time_total}s\n" \
-            "https://missingdigitalback.onrender.com/api/v1/health/"
+            "https://missingdigitalback.onrender.com/healthz"

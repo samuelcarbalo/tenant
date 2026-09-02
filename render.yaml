@@ -7,7 +7,8 @@ services:
     # Aplicar migraciones existentes (nunca makemigrations en Render).
     # migrate usa ';' para que ensure_* corra aunque alguna migración falle a medias.
     preDeployCommand: "python manage.py migrate ecommerce --noinput --settings=config.settings.production; python manage.py migrate --noinput --settings=config.settings.production; python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema"
-    startCommand: "uvicorn config.asgi:application --host 0.0.0.0 --port $PORT --timeout-keep-alive 120 --proxy-headers --forwarded-allow-ips='*'"
+    healthCheckPath: /healthz
+    startCommand: "gunicorn config.asgi:application -c gunicorn.conf.py"
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production

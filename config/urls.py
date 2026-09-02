@@ -1,5 +1,4 @@
 from django.contrib import admin
-from django.http import HttpResponse
 from django.urls import path, include
 from django.conf import settings
 from rest_framework.decorators import api_view
@@ -7,16 +6,12 @@ from rest_framework.response import Response
 from payments.views import mercadopago_webhook
 from config.email_debug import test_email_view
 from core.views import test_email_api
+from core.health import healthz
 
 
 def health_check(request):
-    """Health check de Render: GET y HEAD deben devolver 200 (no 404/405)."""
-    return HttpResponse("OK", status=200)
-
-
-def api_v1_health(request):
-    """Health liviano para keep-alive del frontend (Render free tier)."""
-    return HttpResponse("OK", status=200)
+    """Alias raíz (legacy Render)."""
+    return healthz(request)
 
 
 @api_view(["GET"])
@@ -38,7 +33,8 @@ def api_root(request):
 
 urlpatterns = [
     path("", health_check, name="health_check"),
-    path("api/v1/health/", api_v1_health, name="api-v1-health"),
+    path("healthz", healthz, name="healthz"),
+    path("api/v1/health/", healthz, name="api-v1-health"),
     path("api/", api_root, name="api-root"),
     path("api/test-email/", test_email_view, name="test-email"),
     path("api/v1/test-email/", test_email_api, name="test-email-v1"),
