@@ -46,8 +46,8 @@ class PaymentOrderSerializer(serializers.ModelSerializer):
         ]
 
 
-class MercadoPagoConfigAdminSerializer(serializers.ModelSerializer):
-    """Lectura/escritura de credenciales MP — solo Super Admin Nivel 1."""
+class MercadoPagoConfigSerializer(serializers.ModelSerializer):
+    """Lectura/escritura de credenciales MP (admin / superuser)."""
 
     class Meta:
         model = MercadoPagoConfig
@@ -62,6 +62,9 @@ class MercadoPagoConfigAdminSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["updated_at"]
+
+
+MercadoPagoConfigAdminSerializer = MercadoPagoConfigSerializer
 
 
 class TransaccionFacturacionSerializer(serializers.ModelSerializer):

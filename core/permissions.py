@@ -169,3 +169,25 @@ class IsSuperAdminLevel1(permissions.BasePermission):
         if not user or not user.is_authenticated:
             return False
         return user_is_super_admin_l1(user)
+
+
+class IsSuperUser(permissions.BasePermission):
+    """Solo superusuarios de la plataforma (is_superuser)."""
+
+    message = "Se requieren permisos de superusuario."
+
+    def has_permission(self, request, view):
+        user = getattr(request, "user", None)
+        return bool(user and user.is_authenticated and user.is_superuser)
+
+
+class IsMercadoPagoConfigAdmin(permissions.BasePermission):
+    """IsAdminUser (is_staff) o IsSuperUser (is_superuser) — credenciales Mercado Pago."""
+
+    message = "Se requieren permisos de administrador (staff o superusuario)."
+
+    def has_permission(self, request, view):
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        return bool(user.is_staff or user.is_superuser)
