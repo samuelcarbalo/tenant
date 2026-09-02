@@ -261,3 +261,44 @@ class AdminHierarchyApiTests(TestCase):
         self.assertEqual(self.l2.admin_level, 0)
         self.assertFalse(self.l2.is_staff)
         self.assertEqual(self.l2.role, "user")
+
+    def test_level1_patch_super_admin_role_promotes_to_level1(self):
+        self.client.force_authenticate(self.l1)
+        res = self.client.patch(
+            f"/api/v1/admin/users/{self.regular.id}/",
+            {"role": "super_admin", "admin_level": 1},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        self.regular.refresh_from_db()
+        self.assertEqual(self.regular.admin_level, 1)
+        self.assertTrue(self.regular.is_superuser)
+        self.assertTrue(self.regular.is_staff)
+        self.assertEqual(self.regular.role, "admin")
+        self.assertEqual(res.data.get("panel_role"), "super_admin")
+
+    def test_level1_patch_admin_role_promotes_to_level2(self):
+        self.client.force_authenticate(self.l1)
+        res = self.client.patch(
+            f"/api/v1/admin/users/{self.regular.id}/",
+            {"role": "admin"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        self.regular.refresh_from_db()
+        self.assertEqual(self.regular.admin_level, 2)
+        self.assertFalse(self.regular.is_superuser)
+        self.assertTrue(self.regular.is_staff)
+
+    def test_level2_cannot_patch_super_admin_role(self):
+        self.client.force_authenticate(self.l2)
+        res = self.client.patch(
+            f"/api/v1/admin/users/{self.regular.id}/",
+            {"role": "super_admin", "admin_level": 1},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(str(res.data.get("detail") or res.data.get("message")), self.LEVEL1_MSG)
+        self.regular.refresh_from_db()
+        self.assertEqual(self.regular.admin_level, 0)
+        self.assertFalse(self.regular.is_superuser)
