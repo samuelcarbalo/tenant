@@ -1,5 +1,7 @@
 from django.contrib import admin
 from django.forms import PasswordInput
+from django.shortcuts import redirect
+from django.urls import reverse
 
 from payments.models import (
     MercadoPagoConfig,
@@ -12,7 +14,7 @@ from payments.models import (
 
 @admin.register(MercadoPagoConfig)
 class MercadoPagoConfigAdmin(admin.ModelAdmin):
-    list_display = ("__str__", "is_production", "updated_at")
+    list_display = ("environment_status", "is_production", "updated_at")
     fieldsets = (
         (
             "Entorno activo",
@@ -43,6 +45,10 @@ class MercadoPagoConfigAdmin(admin.ModelAdmin):
     )
     readonly_fields = ("updated_at",)
 
+    @admin.display(description="Entorno Activo")
+    def environment_status(self, obj):
+        return "🟢 PRODUCCIÓN" if obj.is_production else "🟡 PRUEBAS (TEST)"
+
     def formfield_for_dbfield(self, db_field, request, **kwargs):
         if db_field.name in (
             "access_token_test",
@@ -53,14 +59,21 @@ class MercadoPagoConfigAdmin(admin.ModelAdmin):
         return super().formfield_for_dbfield(db_field, request, **kwargs)
 
     def has_add_permission(self, request):
-        return not MercadoPagoConfig.objects.filter(pk=MercadoPagoConfig.SINGLETON_PK).exists()
+        if MercadoPagoConfig.objects.filter(pk=MercadoPagoConfig.SINGLETON_PK).exists():
+            return False
+        return super().has_add_permission(request)
 
     def has_delete_permission(self, request, obj=None):
         return False
 
     def changelist_view(self, request, extra_context=None):
-        MercadoPagoConfig.load()
-        return super().changelist_view(request, extra_context=extra_context)
+        """Singleton: abrir el formulario de edición directamente."""
+        obj = MercadoPagoConfig.load()
+        url = reverse(
+            f"admin:{self.model._meta.app_label}_{self.model._meta.model_name}_change",
+            args=(obj.pk,),
+        )
+        return redirect(url)
 
 
 @admin.register(PaymentOrder)
