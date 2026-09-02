@@ -24,14 +24,20 @@ class Command(BaseCommand):
         if REQUIRED_TABLE not in existing:
             from payments.models import MercadoPagoConfig
 
-            with connection.schema_editor() as editor:
-                editor.create_model(MercadoPagoConfig)
-            self.stdout.write(self.style.SUCCESS(f"tabla {REQUIRED_TABLE} creada"))
+            try:
+                with connection.schema_editor() as editor:
+                    editor.create_model(MercadoPagoConfig)
+                self.stdout.write(self.style.SUCCESS(f"tabla {REQUIRED_TABLE} creada"))
+            except Exception as exc:  # noqa: BLE001
+                self.stderr.write(self.style.WARNING(f"create_model mercadopago_config: {exc}"))
+                try:
+                    connection.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
 
-        from payments.models import MercadoPagoConfig
+        from payments.services.mp_config import get_or_create_mp_config
 
-        MercadoPagoConfig.objects.get_or_create(
-            id=1,
-            defaults={"is_production": False},
-        )
+        config = get_or_create_mp_config()
+        if config is None:
+            raise SystemExit("ensure_payments_schema falló: no se pudo crear mercadopago_config")
         self.stdout.write(self.style.SUCCESS("payments schema OK"))

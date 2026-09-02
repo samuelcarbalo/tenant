@@ -203,3 +203,39 @@ class MercadoPagoAdminConfigApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["public_key"], "PATCHED_PK")
+
+    def test_admin_config_get_returns_200_on_programming_error(self):
+        from unittest.mock import patch
+
+        from django.db.utils import ProgrammingError
+
+        self.client.force_authenticate(self.l1)
+        with patch(
+            "payments.services.mp_config.MercadoPagoConfig.objects.get_or_create",
+            side_effect=ProgrammingError('relation "mercadopago_config" does not exist'),
+        ):
+            response = self.client.get("/api/v1/payments/admin-config/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["is_production"])
+        self.assertEqual(response.data["public_key_test"], "")
+        self.assertIsNone(response.data["updated_at"])
+
+    def test_admin_config_patch_returns_200_on_programming_error(self):
+        from unittest.mock import patch
+
+        from django.db.utils import ProgrammingError
+
+        self.client.force_authenticate(self.l1)
+        with patch(
+            "payments.services.mp_config.MercadoPagoConfig.objects.get_or_create",
+            side_effect=ProgrammingError('relation "mercadopago_config" does not exist'),
+        ):
+            response = self.client.patch(
+                "/api/v1/payments/admin-config/",
+                {"public_key_test": "KEEP-UI-ALIVE"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["public_key_test"], "KEEP-UI-ALIVE")

@@ -3,10 +3,10 @@ services:
     name: tenant-api
     runtime: python
     plan: free
-    buildCommand: "mkdir -p staticfiles && pip install -r requirements.txt && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate ecommerce --noinput --settings=config.settings.production; python manage.py migrate --noinput --settings=config.settings.production; python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema && python manage.py ensure_payments_schema"
-    # Aplicar migraciones existentes (nunca makemigrations en Render).
+    buildCommand: "mkdir -p staticfiles && pip install -r requirements.txt && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate payments --noinput --settings=config.settings.production; python manage.py migrate ecommerce --noinput --settings=config.settings.production; python manage.py migrate --noinput --settings=config.settings.production; python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema && python manage.py ensure_payments_schema"
+    # Aplicar migraciones existentes (nunca makemigrations en Render; ver README).
     # migrate usa ';' para que ensure_* corra aunque alguna migración falle a medias.
-    preDeployCommand: "python manage.py migrate ecommerce --noinput --settings=config.settings.production; python manage.py migrate --noinput --settings=config.settings.production; python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema && python manage.py ensure_payments_schema"
+    preDeployCommand: "python manage.py migrate payments --noinput --settings=config.settings.production; python manage.py migrate ecommerce --noinput --settings=config.settings.production; python manage.py migrate --noinput --settings=config.settings.production; python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema && python manage.py ensure_payments_schema"
     healthCheckPath: /healthz
     startCommand: "gunicorn config.asgi:application -c gunicorn.conf.py"
     envVars:
