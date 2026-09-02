@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from payments.models import PaymentOrder, TransaccionFacturacion
+from payments.models import MercadoPagoConfig, PaymentOrder, TransaccionFacturacion
 from payments.packages import CREDIT_PACKAGES
 
 
@@ -44,6 +44,24 @@ class PaymentOrderSerializer(serializers.ModelSerializer):
             "credits_applied",
             "created_at",
         ]
+
+
+class MercadoPagoConfigAdminSerializer(serializers.ModelSerializer):
+    """Lectura/escritura de credenciales MP — solo Super Admin Nivel 1."""
+
+    class Meta:
+        model = MercadoPagoConfig
+        fields = [
+            "is_production",
+            "public_key_test",
+            "access_token_test",
+            "public_key_prod",
+            "access_token_prod",
+            "client_id_prod",
+            "client_secret_prod",
+            "updated_at",
+        ]
+        read_only_fields = ["updated_at"]
 
 
 class TransaccionFacturacionSerializer(serializers.ModelSerializer):

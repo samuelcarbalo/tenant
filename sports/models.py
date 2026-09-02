@@ -28,7 +28,7 @@ class Tournament(TimeStampedModel):
     ]
 
     sport_type = models.CharField(
-        max_length=20, choices=SPORT_TYPES, default="football"
+        max_length=20, choices=SPORT_TYPES, default="football", db_index=True
     )
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="tournaments"
@@ -52,7 +52,7 @@ class Tournament(TimeStampedModel):
         ("finished", "Finalizado"),
         ("cancelled", "Cancelado"),
     ]
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft", db_index=True)
 
     MODERATION_STATUS_CHOICES = [
         ("approved", "Aprobada"),
@@ -98,6 +98,15 @@ class Tournament(TimeStampedModel):
     class Meta:
         db_table = "tournaments"
         ordering = ["-start_date"]
+        indexes = [
+            models.Index(fields=["sport_type", "status", "-start_date"], name="tourn_sport_status_start"),
+            models.Index(
+                fields=["moderation_status", "status", "-start_date"],
+                name="tourn_mod_status_start",
+            ),
+            models.Index(fields=["posted_by", "-start_date"], name="tourn_posted_by_start"),
+            models.Index(fields=["organization", "-start_date"], name="tourn_org_start"),
+        ]
 
     def __str__(self):
         return self.name
