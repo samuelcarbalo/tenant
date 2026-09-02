@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-HEALTH_URL="${HEALTH_URL:-https://missingdigitalback.onrender.com/api/v1/health/}"
+HEALTH_URL="${HEALTH_URL:-https://missingdigitalback.onrender.com/healthz}"
 MONITOR_NAME="${MONITOR_NAME:-Chever Backend (Render health)}"
 INTERVAL="${INTERVAL:-600}"
 
