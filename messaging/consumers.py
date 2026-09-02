@@ -26,7 +26,8 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             self.user = self.scope.get("user")
 
             if not self.user or not getattr(self.user, "is_authenticated", False):
-                await self.close(code=4001)
+                close_code = int(self.scope.get("ws_close_code") or 4001)
+                await self.close(code=close_code)
                 return
 
             has_access = await self._check_access()

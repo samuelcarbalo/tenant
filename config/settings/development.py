@@ -19,6 +19,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
+WEBSOCKET_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
 
 
 # Cache en memoria (sin Redis) — Channel layer usa InMemory para desarrollo local
