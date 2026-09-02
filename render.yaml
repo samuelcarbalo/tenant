@@ -7,7 +7,7 @@ services:
     # Aplicar migraciones existentes (nunca makemigrations en Render).
     # migrate usa ';' para que ensure_* corra aunque alguna migración falle a medias.
     preDeployCommand: "python manage.py migrate ecommerce --noinput --settings=config.settings.production; python manage.py migrate --noinput --settings=config.settings.production; python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema"
-    startCommand: "mkdir -p staticfiles && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate ecommerce --noinput --settings=config.settings.production; python manage.py migrate --noinput --settings=config.settings.production; python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema && python manage.py seed_superuser && daphne -b 0.0.0.0 -p $PORT config.asgi:application"
+    startCommand: "daphne -b 0.0.0.0 -p $PORT config.asgi:application"
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production
@@ -41,9 +41,9 @@ services:
       - key: ALLOWED_HOSTS
         value: missingdigitalback.onrender.com
       - key: CORS_ALLOWED_ORIGINS
-        sync: false
+        value: https://chever.co,https://www.chever.co
       - key: CSRF_TRUSTED_ORIGINS
-        sync: false
+        value: https://chever.co,https://www.chever.co
       - key: FRONTEND_URL
         value: https://chever.co
       - key: BACKEND_URL

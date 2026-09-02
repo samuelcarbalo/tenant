@@ -45,6 +45,13 @@ for _origin in ("https://chever.co", "https://www.chever.co"):
         CORS_ALLOWED_ORIGINS.append(_origin)
 CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS") or list(CORS_ALLOWED_ORIGINS)
 
+# Orígenes permitidos para handshake WebSocket (Origin header del navegador).
+WEBSOCKET_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
+_extra_ws_origins = _env_list("WEBSOCKET_ALLOWED_ORIGINS")
+for _origin in _extra_ws_origins:
+    if _origin not in WEBSOCKET_ALLOWED_ORIGINS:
+        WEBSOCKET_ALLOWED_ORIGINS.append(_origin)
+
 # Enlaces de correo (nunca localhost, aunque el env de Render esté mal).
 _frontend = (os.getenv("FRONTEND_URL") or "https://chever.co").strip().rstrip("/")
 if (
@@ -112,13 +119,6 @@ else:
             "BACKEND": "channels.layers.InMemoryChannelLayer",
         }
     }
-
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {"hosts": [REDIS_URL]},
-    }
-}
 
 # El throttling usa la cache: en prod comparte contadores vía Redis.
 
