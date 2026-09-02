@@ -21,6 +21,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestión de perfiles con optimizaciones de query.
     """
+    permission_classes = [IsAuthenticated]
     pagination_class =  StandardResultsSetPagination
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['user__email', 'user__first_name', 'user__last_name', 'department']
@@ -72,23 +73,33 @@ class ProfileViewSet(viewsets.ModelViewSet):
 
     def get_object(self):
         """
-        Cachear objetos individuales.
+        Obtiene el perfil desde BD (sin cachear instancias ORM mutables).
         """
-        pk = self.kwargs.get('pk')
-        cache_key = f'profile_{pk}'
+        return super().get_object()
 
-        obj = cache.get(cache_key)
-        if not obj:
-            obj = super().get_object()
-            cache.set(cache_key, obj, 300)        
-        return obj
-    
+    def _response_profile(self, instance, status_code=status.HTTP_200_OK):
+        data = ProfileSerializer(instance, context=self.get_serializer_context()).data
+        return Response(data, status=status_code)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save()
+        cache.delete(f"profile_{instance.pk}")
+        return self._response_profile(instance)
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs["partial"] = True
+        return self.update(request, *args, **kwargs)
+
     def perform_update(self, serializer):
         super().perform_update(serializer)
-        cache.delete(f'profile_{serializer.instance.id}')
+        cache.delete(f"profile_{serializer.instance.pk}")
 
     def perform_destroy(self, instance):
-        cache.delete(f'profile_{instance.id}')
+        cache.delete(f"profile_{instance.pk}")
         super().perform_destroy(instance)
 
     @action(detail=False, methods=['get'])
