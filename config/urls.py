@@ -14,6 +14,11 @@ def health_check(request):
     return HttpResponse("OK", status=200)
 
 
+def api_v1_health(request):
+    """Health liviano para keep-alive del frontend (Render free tier)."""
+    return HttpResponse("OK", status=200)
+
+
 @api_view(["GET"])
 def api_root(request):
     return Response(
@@ -33,6 +38,7 @@ def api_root(request):
 
 urlpatterns = [
     path("", health_check, name="health_check"),
+    path("api/v1/health/", api_v1_health, name="api-v1-health"),
     path("api/", api_root, name="api-root"),
     path("api/test-email/", test_email_view, name="test-email"),
     path("api/v1/test-email/", test_email_api, name="test-email-v1"),

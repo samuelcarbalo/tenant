@@ -35,6 +35,7 @@ redis>=5.0.0
 channels>=4.0.0
 channels-redis>=4.2.0           # Channel layer con Redis (prod)
 daphne>=4.0.0                   # Servidor ASGI (HTTP + WebSocket)
+uvicorn[standard]>=0.27.0       # ASGI en Render (HTTP + WS, timeout keep-alive)
 # Dependencias transitivas de daphne/channels (se instalan solas):
 #   autobahn, Twisted, pyOpenSSL, pyasn1, attrs, etc.
 

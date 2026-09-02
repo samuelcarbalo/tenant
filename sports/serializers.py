@@ -115,8 +115,8 @@ class TournamentListSerializer(serializers.ModelSerializer):
     organization_name = serializers.CharField(
         source="organization.name", read_only=True
     )
-    teams_count = serializers.IntegerField(source="teams.count", read_only=True)
-    matches_count = serializers.IntegerField(source="matches.count", read_only=True)
+    teams_count = serializers.IntegerField(read_only=True)
+    matches_count = serializers.IntegerField(read_only=True)
     sport_type_display = serializers.CharField(
         source="get_sport_type_display", read_only=True
     )
