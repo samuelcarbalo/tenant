@@ -69,12 +69,13 @@ MERCADOPAGO_ACCESS_TOKEN=APP_USR-...
 MERCADOPAGO_WEBHOOK_URL=https://api.tudominio.com/api/v1/payments/webhook/
 
 # Email (SMTP real)
-EMAIL_HOST=smtp.tuservidor.com
+EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
 EMAIL_HOST_USER=no-reply@tudominio.com
-EMAIL_HOST_PASSWORD=<password>
+EMAIL_HOST_PASSWORD=<contraseña de aplicación Gmail, o clave SMTP Hostinger>
 EMAIL_USE_TLS=True
-DEFAULT_FROM_EMAIL=no-reply@tudominio.com
+DEFAULT_FROM_EMAIL=Chéver <no-reply@tudominio.com>
+# Hostinger: EMAIL_HOST=smtp.hostinger.com
 
 # Seguridad
 SECURE_SSL_REDIRECT=True
@@ -101,15 +102,33 @@ VITE_IMGBB_API_KEY=<tu-key>
 
 ## 4. Despliegue del backend (pasos)
 
+### Render (Build Command)
+
+En el panel: **Settings → Build Command**. Usa `config.settings.production` (o define `DJANGO_SETTINGS_MODULE` y omite `--settings=`):
+
+```bash
+pip install -r requirements.txt && mkdir -p staticfiles && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate --noinput --settings=config.settings.production
+```
+
+`makemigrations` **no** se ejecuta en Render. Las migraciones se generan en desarrollo:
+
+```bash
+python manage.py makemigrations --settings=config.settings.development
+```
+
+y se suben al repo; en producción solo se aplican con `migrate`.
+
+### Manual / VPS
+
 ```bash
 # 1. Dependencias
 pip install -r requirements.txt
 
-# 2. Migraciones
-python manage.py migrate
+# 2. Migraciones (aplicar existentes; settings de producción)
+python manage.py migrate --settings=config.settings.production
 
 # 3. Estáticos (WhiteNoise los sirve comprimidos)
-python manage.py collectstatic --noinput
+python manage.py collectstatic --noinput --settings=config.settings.production
 
 # 4. Crear superusuario (una vez)
 python manage.py createsuperuser

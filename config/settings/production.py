@@ -9,6 +9,10 @@ import os
 import dj_database_url
 from .base import *  # noqa: F401,F403
 
+# Garantiza ecommerce en producción (hereda de base; refuerzo explícito).
+if "ecommerce" not in INSTALLED_APPS:  # noqa: F405
+    INSTALLED_APPS.append("ecommerce")  # noqa: F405
+
 
 def _env_list(name, default=""):
     raw = os.getenv(name, default)
@@ -34,9 +38,31 @@ CORS_ALLOWED_ORIGINS = _env_list("CORS_ALLOWED_ORIGINS")
 if not CORS_ALLOWED_ORIGINS:
     raise RuntimeError(
         "CORS_ALLOWED_ORIGINS es obligatorio en producción. "
-        "Ejemplo: CORS_ALLOWED_ORIGINS=https://missigdigital.site,https://https://missingdigitalback.onrender.com/"
+        "Ejemplo: CORS_ALLOWED_ORIGINS=https://chever.co,https://www.chever.co"
     )
-CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS") or CORS_ALLOWED_ORIGINS
+for _origin in ("https://chever.co", "https://www.chever.co"):
+    if _origin not in CORS_ALLOWED_ORIGINS:
+        CORS_ALLOWED_ORIGINS.append(_origin)
+CSRF_TRUSTED_ORIGINS = _env_list("CSRF_TRUSTED_ORIGINS") or list(CORS_ALLOWED_ORIGINS)
+
+# Orígenes permitidos para handshake WebSocket (Origin header del navegador).
+WEBSOCKET_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
+_extra_ws_origins = _env_list("WEBSOCKET_ALLOWED_ORIGINS")
+for _origin in _extra_ws_origins:
+    if _origin not in WEBSOCKET_ALLOWED_ORIGINS:
+        WEBSOCKET_ALLOWED_ORIGINS.append(_origin)
+
+# Enlaces de correo (nunca localhost, aunque el env de Render esté mal).
+_frontend = (os.getenv("FRONTEND_URL") or "https://chever.co").strip().rstrip("/")
+if (
+    not _frontend
+    or "localhost" in _frontend
+    or "127.0.0.1" in _frontend
+):
+    _frontend = "https://chever.co"
+elif _frontend.startswith("http://") and "chever.co" in _frontend:
+    _frontend = "https://chever.co"
+FRONTEND_URL = _frontend
 
 # ── Base de datos (PostgreSQL) ──────────────────────────────────────────────
 
@@ -94,17 +120,11 @@ else:
         }
     }
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {"hosts": [REDIS_URL]},
-    }
-}
-
 # El throttling usa la cache: en prod comparte contadores vía Redis.
 
 # ── Archivos estáticos (WhiteNoise) ─────────────────────────────────────────
 STATIC_ROOT = BASE_DIR / "staticfiles"  # noqa: F405
+STATIC_ROOT.mkdir(parents=True, exist_ok=True)
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {
@@ -121,16 +141,29 @@ if _wn not in MIDDLEWARE:  # noqa: F405
     except ValueError:
         MIDDLEWARE.insert(0, _wn)  # noqa: F405
 
-# ── Email (SMTP real) ───────────────────────────────────────────────────────
-EMAIL_BACKEND = os.getenv(
-    "EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend"
+# ── Email (producción / Render) ─────────────────────────────────────────────
+# SMTP está bloqueado en Render Free (Errno 101 en 587 y 465).
+# El envío real usa core.email.send_system_email → API HTTP de Resend (:443).
+EMAIL_BACKEND = "core.mail_backends.ResendHTTPEmailBackend"
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = 443
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
+EMAIL_USE_TLS = False
+EMAIL_USE_SSL = False
+DEFAULT_FROM_EMAIL = (
+    os.getenv("RESEND_FROM_EMAIL")
+    or os.getenv("DEFAULT_FROM_EMAIL")
+    or "Chéver <soporte@chever.co>"
 )
-EMAIL_HOST = os.getenv("EMAIL_HOST", "")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-EMAIL_USE_TLS = _env_bool("EMAIL_USE_TLS", True)
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@localhost")
+if "gmail.com" in DEFAULT_FROM_EMAIL.lower() or "googlemail.com" in DEFAULT_FROM_EMAIL.lower():
+    DEFAULT_FROM_EMAIL = "Chéver <soporte@chever.co>"
+SERVER_EMAIL = os.getenv("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
+
+RESEND_API_KEY = (os.getenv("RESEND_API_KEY") or "").strip()
+SENDGRID_API_KEY = (os.getenv("SENDGRID_API_KEY") or "").strip()
+ANYMAIL = {"RESEND_API_KEY": RESEND_API_KEY} if RESEND_API_KEY else {}
+EMAIL_LOGO_URL = os.getenv("EMAIL_LOGO_URL", "https://chever.co/chever_oficial.svg")
 
 # ── Seguridad HTTPS ─────────────────────────────────────────────────────────
 # Detrás de un proxy/balanceador que hace TLS (nginx, traefik, load balancer):

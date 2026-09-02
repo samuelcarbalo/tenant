@@ -21,45 +21,55 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
     """
 
     async def connect(self):
-        self.conversation_id = self.scope["url_route"]["kwargs"]["conversation_id"]
-        self.user = self.scope.get("user")
+        try:
+            self.conversation_id = self.scope["url_route"]["kwargs"]["conversation_id"]
+            self.user = self.scope.get("user")
 
-        if not self.user or not self.user.is_authenticated:
-            await self.close(code=4001)
-            return
+            if not self.user or not getattr(self.user, "is_authenticated", False):
+                close_code = int(self.scope.get("ws_close_code") or 4001)
+                await self.close(code=close_code)
+                return
 
-        has_access = await self._check_access()
-        if not has_access:
-            await self.close(code=4003)
-            return
+            has_access = await self._check_access()
+            if not has_access:
+                await self.close(code=4003)
+                return
 
-        self.room_group_name = f"chat_{self.conversation_id}"
-        await self.channel_layer.group_add(self.room_group_name, self.channel_name)
-        await self.accept()
+            self.room_group_name = f"chat_{self.conversation_id}"
+            await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+            await self.accept()
 
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                "type": "presence.update",
-                "user_id": str(self.user.id),
-                "status": "online",
-            },
-        )
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    "type": "presence.update",
+                    "user_id": str(self.user.id),
+                    "status": "online",
+                },
+            )
+        except Exception:
+            try:
+                await self.close(code=1011)
+            except Exception:
+                pass
 
     async def disconnect(self, close_code):
-        if hasattr(self, "room_group_name"):
-            await self.channel_layer.group_discard(
-                self.room_group_name, self.channel_name
-            )
-            if self.user and self.user.is_authenticated:
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {
-                        "type": "presence.update",
-                        "user_id": str(self.user.id),
-                        "status": "offline",
-                    },
+        try:
+            if hasattr(self, "room_group_name"):
+                await self.channel_layer.group_discard(
+                    self.room_group_name, self.channel_name
                 )
+                if self.user and getattr(self.user, "is_authenticated", False):
+                    await self.channel_layer.group_send(
+                        self.room_group_name,
+                        {
+                            "type": "presence.update",
+                            "user_id": str(self.user.id),
+                            "status": "offline",
+                        },
+                    )
+        except Exception:
+            pass
 
     async def receive_json(self, content, **kwargs):
         event_type = content.get("type")

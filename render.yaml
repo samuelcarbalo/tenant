@@ -3,13 +3,30 @@ services:
     name: tenant-api
     runtime: python
     plan: free
-    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput --clear && python manage.py migrate"
+    buildCommand: "mkdir -p staticfiles && pip install -r requirements.txt && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate ecommerce --noinput --settings=config.settings.production; python manage.py migrate --noinput --settings=config.settings.production; python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema"
+    # Aplicar migraciones existentes (nunca makemigrations en Render).
+    # migrate usa ';' para que ensure_* corra aunque alguna migración falle a medias.
+    preDeployCommand: "python manage.py migrate ecommerce --noinput --settings=config.settings.production; python manage.py migrate --noinput --settings=config.settings.production; python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema"
     startCommand: "daphne -b 0.0.0.0 -p $PORT config.asgi:application"
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production
       - key: PYTHON_VERSION
         value: 3.12
+      - key: EMAIL_BACKEND
+        value: django.core.mail.backends.smtp.EmailBackend
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_USE_TLS
+        value: "True"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: DEFAULT_FROM_EMAIL
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_URL
@@ -24,18 +41,20 @@ services:
       - key: ALLOWED_HOSTS
         value: missingdigitalback.onrender.com
       - key: CORS_ALLOWED_ORIGINS
-        sync: false
+        value: https://chever.co,https://www.chever.co
       - key: CSRF_TRUSTED_ORIGINS
-        sync: false
+        value: https://chever.co,https://www.chever.co
       - key: FRONTEND_URL
-        sync: false
+        value: https://chever.co
       - key: BACKEND_URL
-        sync: false
+        value: https://missingdigitalback.onrender.com
       - key: MERCADOPAGO_PUBLIC_KEY
         sync: false
       - key: MERCADOPAGO_ACCESS_TOKEN
         sync: false
       - key: MERCADOPAGO_WEBHOOK_URL
+        sync: false
+      - key: MERCADOPAGO_WEBHOOK_SECRET
         sync: false
       - key: SECURE_SSL_REDIRECT
         value: false

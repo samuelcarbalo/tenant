@@ -1,28 +1,17 @@
 from django.contrib import admin
+from django.http import HttpResponse
 from django.urls import path, include
 from django.conf import settings
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from organizations.views import OrganizationViewSet
-from rest_framework.routers import DefaultRouter
-# urls.py - AGREGAR TEMPORALMENTE
-from django.http import JsonResponse
-from django.contrib.auth import get_user_model
+from payments.views import mercadopago_webhook
+from config.email_debug import test_email_view
+from core.views import test_email_api
 
-User = get_user_model()
 
-def create_superuser_view(request):
-    if User.objects.filter(email='carbalo087@gmail.com').exists():
-        return JsonResponse({'status': 'already_exists'})
-    
-    User.objects.create_superuser(
-    username='admin',           # ← Agregar username
-    email='carbalo087@gmail.com',
-    password='TuPasswordSeguro123',
-    first_name='Admin',
-    last_name='User'
-)
-    return JsonResponse({'status': 'created'})
+def health_check(request):
+    """Health check de Render: GET y HEAD deben devolver 200 (no 404/405)."""
+    return HttpResponse("OK", status=200)
 
 
 @api_view(["GET"])
@@ -35,15 +24,21 @@ def api_root(request):
                 "auth": "/api/v1/auth/",
                 "profiles": "/api/v1/profiles/",
                 "organizations": "/api/v1/organizations/",
+                "test_email": "/api/v1/test-email/",
+                "test_email_legacy": "/api/test-email/",
             },
         }
     )
 
 
-# Al inicio de config/urls.py
 urlpatterns = [
+    path("", health_check, name="health_check"),
+    path("api/", api_root, name="api-root"),
+    path("api/test-email/", test_email_view, name="test-email"),
+    path("api/v1/test-email/", test_email_api, name="test-email-v1"),
     path("admin/", admin.site.urls),
     path("api/v1/auth/", include("authentication.urls")),
+    path("api/v1/admin/", include("authentication.admin_urls")),
     path("api/v1/profiles/", include("profiles.urls")),
     path(
         "api/v1/organizations/", include("organizations.urls")
@@ -54,11 +49,15 @@ urlpatterns = [
     path("api/v1/messaging/", include("messaging.urls")),
     path("api/v1/notifications/", include("notifications.urls")),
     path("api/v1/payments/", include("payments.urls")),
+    # Alias amigable para webhooks MP (mismo handler que /api/v1/payments/webhook/)
+    path("api/webhooks/mercadopago/", mercadopago_webhook, name="mp-webhook-alias"),
     path("api/v1/moderation/", include("moderation.urls")),
     path("api/v1/advertising/", include("advertising.urls")),
     path("api/v1/events/", include("events.urls")),
     path("api/v1/contact/", include("contact.urls")),
-    path('__create_superuser/', create_superuser_view),
+    path("api/v1/ecommerce/", include("ecommerce.urls")),
+    path("api/v1/store/", include(("ecommerce.store_urls", "store"), namespace="store")),
+    path("api/store/", include(("ecommerce.store_urls", "store"), namespace="store_alias")),
 ]
 if settings.DEBUG:
     from django.conf.urls.static import static

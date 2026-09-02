@@ -34,6 +34,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             "username": self.user.username,
             "full_name": self.user.full_name,
             "role": self.user.role,
+            "admin_level": int(getattr(self.user, "admin_level", 0) or 0),
+            "is_superuser": self.user.is_superuser,
+            "is_staff": self.user.is_staff,
             # AHORA: string si es empresa, null si no
             "company_name": self.user.company_name if self.user.company_name else False,
             "user_type": self.user.user_type,  # opcional
@@ -62,6 +65,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         if user.is_superuser:
             token["is_superuser"] = True
+        token["admin_level"] = int(getattr(user, "admin_level", 0) or 0)
 
         return token
 
@@ -226,10 +230,13 @@ class UserSerializer(serializers.ModelSerializer):
             "phone",
             "full_name",
             "role",
+            "admin_level",
             "organization",
             "organization_name",
             "is_active",
             "is_superuser",
+            "is_staff",
+            "is_unlimited_credits",
             "email_verified",
             "date_joined",
             "last_login",
@@ -237,7 +244,15 @@ class UserSerializer(serializers.ModelSerializer):
             "credits",
             "user_type",
         ]
-        read_only_fields = ["id", "email", "organization", "date_joined", "is_superuser"]
+        read_only_fields = [
+            "id",
+            "email",
+            "organization",
+            "date_joined",
+            "is_superuser",
+            "is_staff",
+            "admin_level",
+        ]
 
 
 class PasswordChangeSerializer(serializers.Serializer):  # Cambia a Serializer
@@ -268,3 +283,25 @@ class PasswordChangeSerializer(serializers.Serializer):  # Cambia a Serializer
         user.set_password(self.validated_data["new_password"])
         user.save()
         return user
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField(required=True)
+    token = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True, min_length=8)
+    new_password_confirm = serializers.CharField(required=True)
+
+    def validate(self, data):
+        if data["new_password"] != data["new_password_confirm"]:
+            raise serializers.ValidationError(
+                {"new_password_confirm": "Las contraseñas no coinciden."}
+            )
+        from authentication.emails import token_generator, user_from_uidb64
+
+        user = user_from_uidb64(data["uid"])
+        if user is None or not token_generator.check_token(user, data["token"]):
+            raise serializers.ValidationError(
+                {"token": "El enlace de restablecimiento no es válido o ya expiró."}
+            )
+        data["user"] = user
+        return data

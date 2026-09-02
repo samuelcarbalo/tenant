@@ -44,16 +44,23 @@ CREDIT_PACKAGES = {
         "price_cop": 200000,
         "badge": "Patrocinio mensual",
         "savings_cop": 50000,
-        "description": "250 créditos — cubre un patrocinio de torneo por 1 mes.",
+        "description": (
+            "250 créditos — suficientes para activar 1 mes ilimitado de Tienda Virtual "
+            "al publicar tu primer producto, o usar en torneos y demás servicios."
+        ),
     },
     "diamante": {
         "id": "diamante",
         "name": "Paquete Diamante",
         "credits": 450,
         "price_cop": 350000,
-        "badge": "Patrocinio bimestral",
+        "badge": "Patrocinio ejecutivo",
         "savings_cop": 100000,
-        "description": "450 créditos — cubre el patrocinio exclusivo por 2 meses.",
+        "description": (
+            "450 créditos: al publicar en tienda con saldo ≥ 250 se activan 30 días ilimitados "
+            "(250 créditos); los 200 restantes quedan libres para empleos, inmuebles, torneos "
+            "y demás servicios."
+        ),
     },
 }
 
@@ -62,6 +69,9 @@ CREDIT_COST_JOB = 5
 CREDIT_COST_REAL_ESTATE = 5
 CREDIT_COST_TOURNAMENT = 50
 CREDIT_COST_EVENT = 5
+CREDIT_COST_STORE = 10
+CREDIT_COST_STORE_UNLIMITED = 250
+STORE_UNLIMITED_DAYS = 30
 CREDIT_VALUE_COP = 1000  # 1 crédito = $1.000 COP
 
 

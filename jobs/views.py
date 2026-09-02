@@ -19,6 +19,7 @@ from .serializers import (
     JobApplicationSerializer,
     JobApplicationUpdateSerializer,
 )
+from core.permissions import resolve_request_organization, user_is_platform_elevated
 from .permissions import IsManagerOfOrganization, CanApplyToJob
 
 
@@ -40,7 +41,8 @@ class JobOfferViewSet(viewsets.ModelViewSet):
         "is_active",
         "organization",
         "category",
-    ]  # ← AGREGAR category
+        "is_external",
+    ]
     search_fields = ["title", "company_name", "description", "skills", "category"]
     ordering_fields = ["posted_at", "salary_min", "applications_count"]
 
@@ -73,10 +75,15 @@ class JobOfferViewSet(viewsets.ModelViewSet):
         user = self.request.user
         queryset = JobOffer.objects.select_related("organization", "posted_by")
 
-        if user.is_authenticated and user.role == "manager":
+        if user.is_authenticated and (
+            user.role == "manager" or user_is_platform_elevated(user)
+        ):
             my_offers = self.request.query_params.get("my_offers", "false")
             if my_offers.lower() == "true":
-                queryset = queryset.filter(company_name=user.company_name)
+                if user_is_platform_elevated(user):
+                    queryset = queryset.filter(posted_by=user)
+                else:
+                    queryset = queryset.filter(company_name=user.company_name)
         # Filtrar por organización si se especifica
         org_slug = self.request.query_params.get("organization")
         if org_slug:
@@ -103,37 +110,36 @@ class JobOfferViewSet(viewsets.ModelViewSet):
         user = self.request.user
         print(f"DEBUG: User is {user} - Auth: {user.is_authenticated}")
 
-        # 1. Intentar obtener el nombre (Prioridad: Usuario > Organización)
+        org = resolve_request_organization(self.request)
         company_name = user.company_name or (
-            user.organization.name if user.organization else None
-        )
+            org.name if org else None
+        ) or (
+            user.get_full_name() if user_is_platform_elevated(user) else None
+        ) or "Plataforma"
         print(f"DEBUG: Company name is {company_name}")
-        # 2. Hard check: Si no hay nombre, abortamos la operación
-        if not company_name:
+        if not org:
             raise ValidationError(
                 {
-                    "detail": "No se pudo determinar el nombre de la empresa. "
-                    "El usuario o su organización deben tener un nombre asignado."
+                    "detail": "No se pudo resolver la organización. "
+                    "Envía la cabecera X-Tenant o asigna una organización al usuario."
                 }
             )
 
         # 3. Validar y restar créditos
         with transaction.atomic():
             fresh_user = User.objects.select_for_update().get(id=user.id)
-            if fresh_user.credits < 5:
-                raise ValidationError(
-                    {
-                        "detail": f"No tienes suficientes créditos para publicar una oferta de empleo. "
-                        f"Publicar un empleo cuesta 5 créditos y actualmente tienes {fresh_user.credits} créditos."
-                    }
-                )
-            fresh_user.credits -= 5
-            fresh_user.save(update_fields=["credits"])
-            user.credits = fresh_user.credits
+            from authentication.credits import charge_credits
+
+            user.credits = charge_credits(
+                fresh_user,
+                5,
+                "No tienes suficientes créditos para publicar una oferta de empleo. "
+                f"Publicar un empleo cuesta 5 créditos y actualmente tienes {fresh_user.credits} créditos.",
+            )
 
             # 4. Si llegamos aquí, guardamos con seguridad
             serializer.save(
-                organization=user.organization,
+                organization=org,
                 posted_by=user,
                 company_name=company_name,
             )
@@ -146,8 +152,11 @@ class JobOfferViewSet(viewsets.ModelViewSet):
         user = self.request.user
 
         # Siempre usar el company_name del usuario, ignorar lo del frontend
+        org = resolve_request_organization(self.request)
         company_name = user.company_name or (
-            user.organization.name if user.organization else None
+            org.name if org else None
+        ) or (
+            user.get_full_name() if user_is_platform_elevated(user) else None
         )
 
         if not company_name:
@@ -197,35 +206,67 @@ class JobOfferViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def apply(self, request, pk=None):
-        """Postularse a una oferta"""
+        """Postularse a una oferta (interna o redirección externa)."""
         offer = self.get_object()
 
-        # Verificar que no esté expirada
         if offer.is_expired:
             return Response(
                 {"error": "Esta oferta ha expirado."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Verificar que no haya postulado ya
-        if offer.applications.filter(applicant=request.user).exists():
+
+        existing = offer.applications.filter(applicant=request.user).first()
+
+        if offer.is_external:
+            if not offer.external_apply_url:
+                return Response(
+                    {"error": "Esta oferta externa no tiene URL de postulación."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if existing:
+                return Response(
+                    {
+                        "success": True,
+                        "redirected": True,
+                        "already_applied": True,
+                        "message": "Postulación externa ya registrada. Redirigiendo al sitio de la empresa.",
+                        "external_apply_url": offer.external_apply_url,
+                        "application_status": existing.status,
+                    }
+                )
+            application = JobApplication.objects.create(
+                offer=offer,
+                applicant=request.user,
+                status="redirected",
+                cover_letter="",
+            )
+            return Response(
+                {
+                    "success": True,
+                    "redirected": True,
+                    "already_applied": False,
+                    "message": "Postulación registrada como redirigida / aplicada externamente.",
+                    "external_apply_url": offer.external_apply_url,
+                    "application_status": application.status,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        if existing:
             return Response(
                 {"error": "Ya te has postulado a esta oferta."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Crear postulación
         serializer = JobApplicationSerializer(
             data=request.data, context={"request": request}
         )
         serializer.is_valid(raise_exception=True)
         serializer.save(offer=offer, applicant=request.user)
 
-        # Incrementar contador
-        # offer.applications_count += 1
-        # offer.save()
-
         return Response(
             {
                 "success": True,
+                "redirected": False,
                 "message": "Postulación enviada exitosamente.",
                 "application": serializer.data,
             },

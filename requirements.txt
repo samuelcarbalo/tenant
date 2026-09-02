@@ -50,12 +50,17 @@ gunicorn>=21.2.0
 # --- Static files (producción) ---
 whitenoise>=6.6.0              # Servir static files sin nginx
 
+# --- Email HTTP (Render Free bloquea SMTP 587/465; Resend por HTTPS :443) ---
+resend>=2.0.0
+django-anymail[resend]>=10.3
+
 # =============================================================================
 # Opcionales (no requeridos hoy, útiles en prod)
 # =============================================================================
 django-redis>=5.4.0           # (No necesario: Django 4.2 trae RedisCache nativo)
 Pillow>=10.0.0                # Procesamiento de imágenes (si se validan uploads con PIL)
 sentry-sdk>=1.40.0            # Monitoreo de errores (se activa si SENTRY_DSN está seteado)
+openpyxl>=3.1.0               # Importación masiva Excel (.xlsx) — panel admin
 
 # =============================================================================
 # Requerimientos específicos para producción 

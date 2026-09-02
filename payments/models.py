@@ -92,3 +92,40 @@ class WithdrawalAlert(models.Model):
     class Meta:
         db_table = "withdrawal_alerts"
         ordering = ["-created_at"]
+
+
+class MercadoPagoWebhookEvent(models.Model):
+    """
+    Auditoría de notificaciones webhook de Mercado Pago.
+    Complementa el historial de usuario (Notification) con el payload crudo.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    topic = models.CharField(max_length=64, blank=True, db_index=True)
+    action = models.CharField(max_length=64, blank=True)
+    resource_id = models.CharField(max_length=128, blank=True, db_index=True)
+    request_id = models.CharField(max_length=128, blank=True, db_index=True)
+    signature_valid = models.BooleanField(default=False)
+    live_mode = models.BooleanField(null=True, blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    payment_status = models.CharField(max_length=32, blank=True)
+    payment_order = models.ForeignKey(
+        PaymentOrder,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="webhook_events",
+    )
+    processed_ok = models.BooleanField(default=False)
+    process_result = models.CharField(max_length=64, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "mercadopago_webhook_events"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["resource_id", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"MP webhook {self.topic}:{self.resource_id} ({self.process_result})"

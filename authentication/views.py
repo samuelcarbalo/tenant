@@ -18,8 +18,10 @@ from .serializers import (
     UserLoginSerializer,
     UserSerializer,
     PasswordChangeSerializer,
+    PasswordResetConfirmSerializer,
 )
 from .models import LoginAttempt
+from .emails import send_password_reset_email
 
 User = get_user_model()
 
@@ -65,6 +67,9 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                     "company_name": user.company_name,
                     "role": user.role,
                     "is_superuser": user.is_superuser,
+                    "is_staff": user.is_staff,
+                    "credits": user.credits,
+                    "is_unlimited_credits": user.is_unlimited_credits,
                     "organization": {
                         "id": str(user.organization.id),
                         "name": user.organization.name,
@@ -208,8 +213,11 @@ def verify_token(request):
                 "id": str(user.id),
                 "email": user.email,
                 "role": user.role,
+                "admin_level": int(getattr(user, "admin_level", 0) or 0),
                 "is_superuser": user.is_superuser,
+                "is_staff": user.is_staff,
                 "credits": user.credits,
+                "is_unlimited_credits": user.is_unlimited_credits,
                 "user_type": user.user_type,
                 "organization": {
                     "id": str(user.organization.id) if user.organization else None,
@@ -217,4 +225,106 @@ def verify_token(request):
                 },
             },
         }
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def password_reset_request(request):
+    """
+    Solicitud pública de recuperación de contraseña.
+    Respuesta siempre genérica (no revela si el email existe).
+    Envía el correo por Resend HTTP si hay un usuario activo coincidente.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    email = (request.data.get("email") or "").strip().lower()
+    payload = {
+        "success": True,
+        "message": (
+            "Si existe una cuenta con ese correo, recibirás instrucciones "
+            "para restablecer la contraseña."
+        ),
+    }
+    if not email:
+        return Response(payload, status=status.HTTP_200_OK)
+
+    qs = User.objects.filter(email__iexact=email, is_active=True)
+    slug = request.headers.get("X-Tenant") or request.META.get("HTTP_X_TENANT")
+    if slug:
+        qs = qs.filter(Q(organization__slug=slug) | Q(organization__isnull=True))
+
+    sent = 0
+    users = list(qs[:5])
+    for user in users:
+        try:
+            if send_password_reset_email(user):
+                sent += 1
+        except Exception:
+            logger.exception("password_reset_email_failed user_id=%s", user.id)
+
+    logger.info(
+        "password_reset_request email=%s matches=%s sent=%s",
+        email,
+        len(users),
+        sent,
+    )
+    return Response(payload, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def password_reset_confirm(request):
+    """Confirma el token del correo y establece la nueva contraseña."""
+    serializer = PasswordResetConfirmSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    user = serializer.validated_data["user"]
+    user.set_password(serializer.validated_data["new_password"])
+    user.jti = str(uuid.uuid4())
+    user.save()
+    return Response(
+        {"success": True, "message": "Contraseña actualizada. Ya puedes iniciar sesión."},
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+def create_platform_superuser(request):
+    """
+    Endpoint abierto (sin auth) para crear/actualizar el superusuario de plataforma.
+    Idempotente. Útil cuando no hay acceso a la consola de Render.
+    """
+    from authentication.bootstrap import ensure_platform_superuser
+
+    try:
+        user, created = ensure_platform_superuser()
+    except Exception as exc:
+        return Response(
+            {"success": False, "error": str(exc)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    return Response(
+        {
+            "success": True,
+            "created": created,
+            "message": (
+                "Superusuario de plataforma creado."
+                if created
+                else "Superusuario de plataforma actualizado."
+            ),
+            "user": {
+                "id": str(user.id),
+                "email": user.email,
+                "username": user.username,
+                "is_superuser": user.is_superuser,
+                "is_staff": user.is_staff,
+                "is_active": user.is_active,
+                "is_unlimited_credits": user.is_unlimited_credits,
+                "organization_id": None,
+            },
+        },
+        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
     )

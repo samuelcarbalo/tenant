@@ -19,6 +19,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
+WEBSOCKET_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
 
 
 # Cache en memoria (sin Redis) — Channel layer usa InMemory para desarrollo local
@@ -34,8 +35,9 @@ CHANNEL_LAYERS = {
     },
 }
 
-# Email backend de consola
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+# Email: SMTP real si hay credenciales en .env; si no, consola (flujo local).
+if not (os.getenv("EMAIL_HOST_USER") and os.getenv("EMAIL_HOST_PASSWORD")):
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
 # Throttling más permisivo en desarrollo (evita bloqueos tras pruebas intensivas)
 REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
