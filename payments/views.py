@@ -19,7 +19,11 @@ from payments.serializers import (
     TransaccionFacturacionSerializer,
 )
 from payments.services.mercadopago_service import MercadoPagoService
-from payments.services.mp_config import get_mp_config
+from payments.services.mp_config import (
+    EMPTY_MP_ADMIN_CONFIG,
+    get_mp_config,
+    get_or_create_mp_config,
+)
 from payments.services.payment_processor import apply_approved_payment
 from payments.services.webhook_security import (
     extract_data_id,
@@ -300,10 +304,15 @@ def mp_public_config(request):
 @permission_classes([IsAuthenticated, IsAdminUser | IsSuperUser])
 def mp_admin_config(request):
     """Gestión de credenciales Mercado Pago — IsAdminUser o IsSuperUser (Bearer)."""
-    config, _ = MercadoPagoConfig.objects.get_or_create(
-        id=1,
-        defaults={"is_production": False},
-    )
+    config = get_or_create_mp_config()
+
+    if config is None:
+        payload = dict(EMPTY_MP_ADMIN_CONFIG)
+        if request.method == "PATCH":
+            for key in payload:
+                if key != "updated_at" and key in request.data:
+                    payload[key] = request.data[key]
+        return Response(payload, status=status.HTTP_200_OK)
 
     if request.method == "GET":
         serializer = MercadoPagoConfigSerializer(config)
