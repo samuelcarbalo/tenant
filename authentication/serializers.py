@@ -34,6 +34,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             "username": self.user.username,
             "full_name": self.user.full_name,
             "role": self.user.role,
+            "admin_level": int(getattr(self.user, "admin_level", 0) or 0),
+            "is_superuser": self.user.is_superuser,
+            "is_staff": self.user.is_staff,
             # AHORA: string si es empresa, null si no
             "company_name": self.user.company_name if self.user.company_name else False,
             "user_type": self.user.user_type,  # opcional
@@ -62,6 +65,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         if user.is_superuser:
             token["is_superuser"] = True
+        token["admin_level"] = int(getattr(user, "admin_level", 0) or 0)
 
         return token
 
@@ -226,6 +230,7 @@ class UserSerializer(serializers.ModelSerializer):
             "phone",
             "full_name",
             "role",
+            "admin_level",
             "organization",
             "organization_name",
             "is_active",
@@ -239,7 +244,15 @@ class UserSerializer(serializers.ModelSerializer):
             "credits",
             "user_type",
         ]
-        read_only_fields = ["id", "email", "organization", "date_joined", "is_superuser", "is_staff"]
+        read_only_fields = [
+            "id",
+            "email",
+            "organization",
+            "date_joined",
+            "is_superuser",
+            "is_staff",
+            "admin_level",
+        ]
 
 
 class PasswordChangeSerializer(serializers.Serializer):  # Cambia a Serializer

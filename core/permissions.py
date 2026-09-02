@@ -1,5 +1,37 @@
 from rest_framework import permissions
 
+LEVEL1_FORBIDDEN_MESSAGE = (
+    "No tienes privilegios de Super Admin Nivel 1 para realizar esta acción"
+)
+
+
+def user_admin_level(user) -> int:
+    try:
+        return int(getattr(user, "admin_level", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def user_is_super_admin_l1(user) -> bool:
+    if not user:
+        return False
+    level = user_admin_level(user)
+    if level == 1:
+        return True
+    if level == 2:
+        return False
+    # Superusuarios de plataforma anteriores a admin_level se tratan como Nivel 1.
+    return bool(getattr(user, "is_superuser", False))
+
+
+def user_is_protected_platform_admin(user) -> bool:
+    """Super Admin Nivel 1 o 2: no modificables por administradores de menor nivel."""
+    if not user:
+        return False
+    if user_admin_level(user) in (1, 2):
+        return True
+    return bool(getattr(user, "is_superuser", False))
+
 
 def user_is_platform_elevated(user) -> bool:
     """Superuser / staff / role admin de plataforma (sin org o cross-tenant)."""
@@ -125,3 +157,15 @@ class IsOrganizationAdmin(permissions.BasePermission):
             return True
 
         return request.user.is_staff and getattr(request.user, "role", None) == "admin"
+
+
+class IsSuperAdminLevel1(permissions.BasePermission):
+    """Solo Super Admin Root (Nivel 1) puede gestionar roles administrativos."""
+
+    message = LEVEL1_FORBIDDEN_MESSAGE
+
+    def has_permission(self, request, view):
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        return user_is_super_admin_l1(user)

@@ -45,6 +45,21 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         max_length=20, choices=ROLE_CHOICES, default="user", db_index=True
     )
 
+    ADMIN_LEVEL_USER = 0
+    ADMIN_LEVEL_ROOT = 1
+    ADMIN_LEVEL_DELEGATE = 2
+    ADMIN_LEVEL_CHOICES = [
+        (ADMIN_LEVEL_USER, "Usuario / staff estándar"),
+        (ADMIN_LEVEL_ROOT, "Super Admin Root"),
+        (ADMIN_LEVEL_DELEGATE, "Administrador delegado"),
+    ]
+    admin_level = models.PositiveSmallIntegerField(
+        choices=ADMIN_LEVEL_CHOICES,
+        default=ADMIN_LEVEL_USER,
+        db_index=True,
+        help_text="0=usuario, 1=Super Admin Root, 2=Administrador delegado.",
+    )
+
     # Estado
     is_staff = models.BooleanField(default=False)
     is_superuser = models.BooleanField(default=False)
@@ -142,6 +157,21 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
     def get_username(self):
         return self.username  # Mostrar el username legible, no el identifier
+
+    @property
+    def is_super_admin_l1(self) -> bool:
+        return int(getattr(self, "admin_level", 0) or 0) == self.ADMIN_LEVEL_ROOT
+
+    @property
+    def is_super_admin_l2(self) -> bool:
+        return int(getattr(self, "admin_level", 0) or 0) == self.ADMIN_LEVEL_DELEGATE
+
+    @property
+    def is_platform_admin(self) -> bool:
+        return int(getattr(self, "admin_level", 0) or 0) in (
+            self.ADMIN_LEVEL_ROOT,
+            self.ADMIN_LEVEL_DELEGATE,
+        )
 
     @property
     def has_unlimited_credits(self) -> bool:

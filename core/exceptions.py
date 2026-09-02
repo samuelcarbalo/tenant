@@ -42,7 +42,9 @@ def custom_exception_handler(exc, context):
             response.data = {
                 'success': False,
                 'error': errors,
-                'status_code': response.status_code
+                'status_code': response.status_code,
+                'detail': str(errors[0]['message']) if errors else '',
+                'message': str(errors[0]['message']) if errors else '',
             }
         return response
 
