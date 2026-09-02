@@ -7,14 +7,14 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 
-from core.permissions import IsSuperAdminLevel1
+from core.permissions import IsSuperUser
 from notifications.services import notify_payment_status
 from payments.models import MercadoPagoConfig, MercadoPagoWebhookEvent, PaymentOrder, TransaccionFacturacion
 from payments.packages import CREDIT_PACKAGES, get_package
 from payments.serializers import (
     CreatePreferenceSerializer,
     CreditPackageSerializer,
-    MercadoPagoConfigAdminSerializer,
+    MercadoPagoConfigSerializer,
     PaymentOrderSerializer,
     TransaccionFacturacionSerializer,
 )
@@ -297,15 +297,19 @@ def mp_public_config(request):
 
 
 @api_view(["GET", "PATCH"])
-@permission_classes([IsAuthenticated, IsSuperAdminLevel1])
+@permission_classes([IsAuthenticated, IsAdminUser | IsSuperUser])
 def mp_admin_config(request):
-    """Gestión de credenciales Mercado Pago — solo Super Admin Root (Nivel 1)."""
-    cfg = MercadoPagoConfig.load()
+    """Gestión de credenciales Mercado Pago — IsAdminUser o IsSuperUser (Bearer)."""
+    config, _ = MercadoPagoConfig.objects.get_or_create(
+        id=1,
+        defaults={"is_production": False},
+    )
 
     if request.method == "GET":
-        return Response(MercadoPagoConfigAdminSerializer(cfg).data)
+        serializer = MercadoPagoConfigSerializer(config)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
-    serializer = MercadoPagoConfigAdminSerializer(cfg, data=request.data, partial=True)
+    serializer = MercadoPagoConfigSerializer(config, data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
     serializer.save()
-    return Response(serializer.data)
+    return Response(serializer.data, status=status.HTTP_200_OK)
