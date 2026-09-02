@@ -64,20 +64,39 @@ elif _frontend.startswith("http://") and "chever.co" in _frontend:
     _frontend = "https://chever.co"
 FRONTEND_URL = _frontend
 
-# ── Base de datos (PostgreSQL) ──────────────────────────────────────────────
+# ── Base de datos (PostgreSQL / Neon) ───────────────────────────────────────
 
-# Intenta leer una sola URL (ideal para Neon). Si no existe, recurre al desglose tradicional.
 DATABASE_URL = os.getenv("DATABASE_URL", "")
+_DB_CONN_MAX_AGE = int(os.getenv("DB_CONN_MAX_AGE", "600"))
+_DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "10"))
+_DB_SSL_REQUIRE = _env_bool("DB_SSL_REQUIRE", True)
+
+
+def _apply_postgres_options(db_config: dict) -> dict:
+    """Pool persistente + timeout de conexión + SSL (Neon sslmode=require)."""
+    db_config["CONN_MAX_AGE"] = _DB_CONN_MAX_AGE
+    db_config["CONN_HEALTH_CHECKS"] = _env_bool("DB_CONN_HEALTH_CHECKS", True)
+    options = db_config.setdefault("OPTIONS", {})
+    options["connect_timeout"] = _DB_CONNECT_TIMEOUT
+    if _DB_SSL_REQUIRE and "sslmode" not in options:
+        options["sslmode"] = "require"
+    return db_config
+
 
 if DATABASE_URL:
     DATABASES = {
-        "default": dj_database_url.config(
-            default=DATABASE_URL,
-            conn_max_age=int(os.getenv("DB_CONN_MAX_AGE", "600")),
-            ssl_require=_env_bool("DB_SSL_REQUIRE", True),
+        "default": _apply_postgres_options(
+            dj_database_url.config(
+                default=DATABASE_URL,
+                conn_max_age=_DB_CONN_MAX_AGE,
+                ssl_require=_DB_SSL_REQUIRE,
+            )
         )
     }
 else:
+    _fallback_options = {"connect_timeout": _DB_CONNECT_TIMEOUT}
+    if _DB_SSL_REQUIRE:
+        _fallback_options["sslmode"] = "require"
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -86,7 +105,9 @@ else:
             "PASSWORD": os.getenv("POSTGRES_PASSWORD", ""),
             "HOST": os.getenv("POSTGRES_HOST", "127.0.0.1"),
             "PORT": os.getenv("POSTGRES_PORT", "5432"),
-            "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
+            "CONN_MAX_AGE": _DB_CONN_MAX_AGE,
+            "CONN_HEALTH_CHECKS": _env_bool("DB_CONN_HEALTH_CHECKS", True),
+            "OPTIONS": _fallback_options,
         }
     }
 # ── Cache + Channel layer (Redis) ───────────────────────────────────────────

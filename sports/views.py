@@ -103,7 +103,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated(), IsOrganizationMember()]
 
     def get_queryset(self):
-        queryset = Tournament.objects.select_related("organization").annotate(
+        queryset = Tournament.objects.select_related("organization", "posted_by").annotate(
             teams_count=Count("teams", distinct=True),
             matches_count=Count("matches", distinct=True),
         )

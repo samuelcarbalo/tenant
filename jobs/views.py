@@ -64,14 +64,9 @@ class JobOfferViewSet(viewsets.ModelViewSet):
         return [AllowAny()]
 
     def get_queryset(self):
-        print(
-            f"DEBUG: User is {self.request.user} - Auth: {self.request.user.is_authenticated}"
-        )
         """
         Filtrar ofertas por organización y estado.
         """
-        # Si es manager y pide "my_offers", filtrar por su organización
-        # Filtrar solo activas y no expiradas para usuarios públicos
         user = self.request.user
         queryset = JobOffer.objects.select_related("organization", "posted_by")
 
@@ -336,7 +331,9 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
         if not user.is_authenticated:
             return JobApplication.objects.none()
 
-        queryset = JobApplication.objects.select_related("offer", "applicant")
+        queryset = JobApplication.objects.select_related(
+            "offer", "offer__organization", "applicant"
+        )
 
         # ADMIN: Filtrar por su company_name automáticamente
         # Filtro base por rol
