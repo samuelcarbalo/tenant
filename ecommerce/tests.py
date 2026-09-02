@@ -259,6 +259,122 @@ class CheckoutAPITests(EcommerceBaseTest):
         self.assertIn(res.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
 
 
+class StorePublishCreditsTests(EcommerceBaseTest):
+    def _payload(self, name="Producto cobrado"):
+        return {
+            "name": name,
+            "short_description": "Test",
+            "description": "Desc",
+            "price_cop": "15000",
+            "stock": 2,
+            "category": str(self.category.id),
+            "is_published": True,
+        }
+
+    def test_create_product_charges_10_credits(self):
+        res = self.manager_client.post(
+            f"{API}/products/",
+            self._payload(),
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.manager.refresh_from_db()
+        self.assertEqual(self.manager.credits, 40)
+
+    def test_create_product_insufficient_credits(self):
+        self.manager.credits = 5
+        self.manager.save(update_fields=["credits"])
+        res = self.manager_client.post(
+            f"{API}/products/",
+            self._payload("Sin saldo"),
+            format="json",
+        )
+        self.assertEqual(res.status_code, 402)
+        self.assertIn(
+            "Créditos insuficientes para publicar en la tienda.",
+            str(res.data.get("detail") or res.data.get("message") or res.data),
+        )
+        self.manager.refresh_from_db()
+        self.assertEqual(self.manager.credits, 5)
+
+    def test_balance_250_activates_unlimited_store(self):
+        """Cualquier saldo ≥ 250 activa tienda ilimitada (no solo Paquete Diamante)."""
+        self.manager.credits = 250
+        self.manager.save(update_fields=["credits"])
+        res = self.manager_client.post(
+            f"{API}/products/",
+            self._payload("Platino equivalente"),
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.manager.refresh_from_db()
+        self.assertEqual(self.manager.credits, 0)
+        self.assertIsNotNone(self.manager.store_unlimited_until)
+
+        res2 = self.manager_client.post(
+            f"{API}/products/",
+            self._payload("Segundo ilimitado"),
+            format="json",
+        )
+        self.assertEqual(res2.status_code, status.HTTP_201_CREATED, res2.data)
+        self.manager.refresh_from_db()
+        self.assertEqual(self.manager.credits, 0)
+
+    def test_diamond_package_first_product_activates_unlimited_store(self):
+        self.manager.credits = 450
+        self.manager.save(update_fields=["credits"])
+        res = self.manager_client.post(
+            f"{API}/products/",
+            self._payload("Primero diamante"),
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.manager.refresh_from_db()
+        self.assertEqual(self.manager.credits, 200)
+        self.assertIsNotNone(self.manager.store_unlimited_until)
+
+        res2 = self.manager_client.post(
+            f"{API}/products/",
+            self._payload("Segundo ilimitado"),
+            format="json",
+        )
+        self.assertEqual(res2.status_code, status.HTTP_201_CREATED, res2.data)
+        self.manager.refresh_from_db()
+        self.assertEqual(self.manager.credits, 200)
+
+    def test_below_250_charges_10_per_product(self):
+        self.manager.credits = 240
+        self.manager.save(update_fields=["credits"])
+        res = self.manager_client.post(
+            f"{API}/products/",
+            self._payload("Sin membresía"),
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.manager.refresh_from_db()
+        self.assertEqual(self.manager.credits, 230)
+        self.assertIsNone(self.manager.store_unlimited_until)
+
+    def test_expired_membership_reactivates_with_250_balance(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        self.manager.credits = 300
+        self.manager.store_unlimited_until = timezone.now() - timedelta(days=1)
+        self.manager.save(update_fields=["credits", "store_unlimited_until"])
+        res = self.manager_client.post(
+            f"{API}/products/",
+            self._payload("Renovación"),
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.manager.refresh_from_db()
+        self.assertEqual(self.manager.credits, 50)
+        self.assertIsNotNone(self.manager.store_unlimited_until)
+        self.assertGreater(self.manager.store_unlimited_until, timezone.now())
+
+
 class ExceptionHandlerTests(TestCase):
     def test_programming_error_returns_json_503(self):
         from django.db.utils import ProgrammingError
