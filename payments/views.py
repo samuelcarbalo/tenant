@@ -17,6 +17,7 @@ from payments.serializers import (
     TransaccionFacturacionSerializer,
 )
 from payments.services.mercadopago_service import MercadoPagoService
+from payments.services.mp_config import get_mp_config
 from payments.services.payment_processor import apply_approved_payment
 from payments.services.webhook_security import (
     extract_data_id,
@@ -82,6 +83,7 @@ class PaymentViewSet(viewsets.ViewSet):
                 "preference_id": pref["preference_id"],
                 "init_point": pref.get("init_point"),
                 "sandbox_init_point": pref.get("sandbox_init_point"),
+                "is_production": pref.get("is_production", mp.is_production),
                 "order_id": order.id,
             }
         )
@@ -282,9 +284,11 @@ def mercadopago_webhook(request):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def mp_public_config(request):
-    """Expone la Public Key al frontend (seguro — es pública)."""
+    """Expone la Public Key activa al frontend (seguro — es pública)."""
+    cfg = get_mp_config()
     return Response(
         {
-            "public_key": getattr(settings, "MERCADOPAGO_PUBLIC_KEY", ""),
+            "public_key": cfg["public_key"],
+            "is_production": cfg["is_production"],
         }
     )
