@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import ValidationError
 from django.db.models import Q, Count, Prefetch, F
+from django.core.cache import cache
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.db import transaction
@@ -221,9 +222,16 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], permission_classes=[AllowAny])
     def format_templates(self, request):
-        """Plantillas de formato disponibles."""
-        sport_type = request.query_params.get("sport_type")
-        return Response(list_templates(sport_type))
+        """Plantillas de formato disponibles (cacheadas 1 h)."""
+        sport_type = request.query_params.get("sport_type") or "all"
+        cache_key = f"sports:format_templates:{sport_type}"
+        data = cache.get(cache_key)
+        if data is None:
+            data = list_templates(
+                None if sport_type == "all" else request.query_params.get("sport_type")
+            )
+            cache.set(cache_key, data, 3600)
+        return Response(data)
 
     @action(detail=True, methods=["get"], permission_classes=[AllowAny])
     def structure(self, request, slug=None):
@@ -438,8 +446,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
         user = request.user
 
         if not user_can_manage_content(user):
-            print(f"DEBUG: User {user} is not an admin")
-            print(f"DEBUG: User role is {user.role}")
             return Response(
                 {
                     "error": "No tienes permisos de administrador para ver esta información."
