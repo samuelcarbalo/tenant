@@ -5,6 +5,7 @@ import mercadopago
 from django.conf import settings
 
 from payments.packages import get_package
+from payments.services.mp_config import get_mp_config
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,14 @@ class MercadoPagoService:
     """Cliente para Mercado Pago Checkout Pro."""
 
     def __init__(self):
-        access_token = getattr(settings, "MERCADOPAGO_ACCESS_TOKEN", "")
-        if not access_token or access_token.startswith("YOUR_"):
-            logger.warning("MERCADOPAGO_ACCESS_TOKEN no configurado — modo placeholder.")
+        mp_cfg = get_mp_config()
+        access_token = mp_cfg["access_token"]
+        self.is_production = mp_cfg["is_production"]
+        if not access_token or str(access_token).startswith("YOUR_"):
+            logger.warning(
+                "Mercado Pago access token no configurado (modo %s) — placeholder.",
+                "producción" if self.is_production else "prueba",
+            )
         self.sdk = mercadopago.SDK(access_token)
 
     def create_preference(
@@ -125,6 +131,7 @@ class MercadoPagoService:
             "preference_id": response.get("id"),
             "init_point": response.get("init_point"),
             "sandbox_init_point": response.get("sandbox_init_point"),
+            "is_production": self.is_production,
         }
 
     def create_preference_from_items(
@@ -195,6 +202,7 @@ class MercadoPagoService:
             "preference_id": response.get("id"),
             "init_point": response.get("init_point"),
             "sandbox_init_point": response.get("sandbox_init_point"),
+            "is_production": self.is_production,
         }
 
     def get_payment(self, payment_id: str) -> dict:

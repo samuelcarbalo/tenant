@@ -463,6 +463,7 @@ class ShopOrderViewSet(viewsets.ReadOnlyModelViewSet):
                 "preference_id": pref.get("preference_id"),
                 "init_point": pref.get("init_point"),
                 "sandbox_init_point": pref.get("sandbox_init_point"),
+                "is_production": pref.get("is_production", mp.is_production),
             },
             status=status.HTTP_201_CREATED,
         )

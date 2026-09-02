@@ -129,3 +129,55 @@ class MercadoPagoWebhookEvent(models.Model):
 
     def __str__(self):
         return f"MP webhook {self.topic}:{self.resource_id} ({self.process_result})"
+
+
+class MercadoPagoConfig(models.Model):
+    """
+    Configuración singleton de Mercado Pago (Test / Producción).
+    Gestionar desde Django Admin → Pagos → Configuración Mercado Pago.
+    """
+
+    SINGLETON_PK = 1
+
+    is_production = models.BooleanField(
+        default=False,
+        help_text="Desactivado = credenciales de prueba (Test). Activado = Producción (Live).",
+    )
+    public_key_test = models.CharField(max_length=255, blank=True)
+    access_token_test = models.CharField(max_length=512, blank=True)
+    public_key_prod = models.CharField(max_length=255, blank=True)
+    access_token_prod = models.CharField(max_length=512, blank=True)
+    client_id_prod = models.CharField(max_length=255, blank=True)
+    client_secret_prod = models.CharField(max_length=512, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "mercadopago_config"
+        verbose_name = "Configuración Mercado Pago"
+        verbose_name_plural = "Configuración Mercado Pago"
+
+    def __str__(self):
+        mode = "Producción" if self.is_production else "Pruebas (Test)"
+        return f"Mercado Pago — {mode}"
+
+    def save(self, *args, **kwargs):
+        self.pk = self.SINGLETON_PK
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        return
+
+    @classmethod
+    def load(cls) -> "MercadoPagoConfig":
+        obj, _created = cls.objects.get_or_create(pk=cls.SINGLETON_PK)
+        return obj
+
+    @property
+    def active_public_key(self) -> str:
+        key = self.public_key_prod if self.is_production else self.public_key_test
+        return (key or "").strip()
+
+    @property
+    def active_access_token(self) -> str:
+        token = self.access_token_prod if self.is_production else self.access_token_test
+        return (token or "").strip()

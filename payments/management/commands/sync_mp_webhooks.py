@@ -19,6 +19,8 @@ import requests
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
+from payments.services.mp_config import get_mp_config
+
 MP_API = "https://api.mercadopago.com"
 
 
@@ -46,9 +48,11 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        token = getattr(settings, "MERCADOPAGO_ACCESS_TOKEN", "")
-        if not token or token.startswith("YOUR_"):
-            raise CommandError("Configura MERCADOPAGO_ACCESS_TOKEN en el entorno.")
+        token = get_mp_config()["access_token"]
+        if not token or str(token).startswith("YOUR_"):
+            raise CommandError(
+                "Configura credenciales en Admin → Mercado Pago o MERCADOPAGO_ACCESS_TOKEN."
+            )
 
         webhook_url = (options["url"] or getattr(settings, "MERCADOPAGO_WEBHOOK_URL", "")).rstrip("/")
         if options["ensure"] and not webhook_url:
