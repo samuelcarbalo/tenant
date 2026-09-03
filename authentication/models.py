@@ -76,6 +76,17 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         default=False,
         help_text="Si es True, el usuario no consume créditos al publicar.",
     )
+    sports_module_active = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="True si la suscripción al Servicio de Torneos está vigente.",
+    )
+    sports_module_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Fecha de vencimiento del acceso CRUD ilimitado al módulo deportivo.",
+    )
     # Opcional: campo para distinguir tipo de usuario
     USER_TYPE_CHOICES = [
         ("person", "Persona"),
@@ -204,3 +215,38 @@ class LoginAttempt(TimeStampedModel):
     class Meta:
         db_table = "login_attempts"
         ordering = ["-created_at"]
+
+
+class CreditSubscriptionTransaction(TimeStampedModel):
+    """Historial de canjes de créditos por suscripciones de módulo."""
+
+    TYPE_SPORTS_MODULE = "SPORTS_MODULE_SUBSCRIPTION"
+    TRANSACTION_TYPES = [
+        (TYPE_SPORTS_MODULE, "Suscripción Servicio de Torneos"),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="subscription_transactions",
+    )
+    transaction_type = models.CharField(
+        max_length=64,
+        choices=TRANSACTION_TYPES,
+        db_index=True,
+    )
+    credits_spent = models.PositiveIntegerField()
+    days_granted = models.PositiveIntegerField(default=30)
+    expires_at = models.DateTimeField()
+    notes = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        db_table = "credit_subscription_transactions"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["transaction_type", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.transaction_type} — {self.user_id} — {self.credits_spent}"

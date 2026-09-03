@@ -26,7 +26,7 @@ CREDIT_PACKAGES = {
         "price_cop": 45000,
         "badge": "¡Ideal para 1 Torneo!",
         "savings_cop": 5000,
-        "description": "50 créditos — suficiente para crear un torneo de fútbol.",
+        "description": "50 créditos — avance hacia el Plan Administración Deportiva (200 créditos / 30 días).",
     },
     "oro": {
         "id": "oro",
@@ -67,7 +67,9 @@ CREDIT_PACKAGES = {
 # Costos internos de consumo
 CREDIT_COST_JOB = 5
 CREDIT_COST_REAL_ESTATE = 5
-CREDIT_COST_TOURNAMENT = 50
+CREDIT_COST_TOURNAMENT = 200
+CREDIT_COST_SPORTS_MODULE = 200
+SPORTS_MODULE_DAYS = 30
 CREDIT_COST_EVENT = 5
 CREDIT_COST_STORE = 10
 CREDIT_COST_STORE_UNLIMITED = 250

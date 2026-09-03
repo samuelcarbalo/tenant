@@ -3,6 +3,8 @@ Prueba integral Fase 1 + 2: scoring softbol, estructura, fixture, standings.
 Ejecutar:
   python manage.py test sports.tests_integration_phases --settings=config.settings.development
 """
+from datetime import timedelta
+
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -30,6 +32,8 @@ class Phase1And2IntegrationTests(TestCase):
             organization=self.org,
             role="manager",
             credits=500,
+            sports_module_active=True,
+            sports_module_expires_at=timezone.now() + timedelta(days=30),
         )
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)

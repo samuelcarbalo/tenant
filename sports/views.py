@@ -76,9 +76,10 @@ from core.permissions import (
     user_can_manage_content,
     user_is_platform_elevated,
 )
+from sports.access import SportsSubscriptionGuardMixin
 
 
-class TournamentViewSet(viewsets.ModelViewSet):
+class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     """ViewSet para torneos"""
 
     queryset = Tournament.objects.all()
@@ -200,16 +201,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
         format_group_count = serializer.validated_data.pop("format_group_count", 1)
 
         with transaction.atomic():
-            fresh_user = User.objects.select_for_update().get(id=user.id)
-            from authentication.credits import charge_credits
-
-            user.credits = charge_credits(
-                fresh_user,
-                50,
-                "No tienes suficientes créditos para crear un torneo. "
-                f"Crear un torneo cuesta 50 créditos y actualmente tienes {fresh_user.credits} créditos.",
-            )
-
             org = resolve_request_organization(self.request)
             if not org:
                 raise ValidationError(
@@ -632,7 +623,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response(data)
 
 
-class TeamViewSet(viewsets.ModelViewSet):
+class TeamViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     """ViewSet para equipos"""
 
     queryset = Team.objects.all()
@@ -717,7 +708,7 @@ class TeamViewSet(viewsets.ModelViewSet):
         serializer.save()
 
 
-class PlayerViewSet(viewsets.ModelViewSet):
+class PlayerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     """ViewSet para jugadores - CRUD con permisos de Coach"""
 
     queryset = Player.objects.all()
@@ -891,7 +882,7 @@ class PlayerViewSet(viewsets.ModelViewSet):
         return self.tournament.slug if self.tournament else None
 
 
-class PlayerSuspensionViewSet(viewsets.ModelViewSet):
+class PlayerSuspensionViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     """Gestión de suspensiones de jugadores."""
 
     queryset = PlayerSuspension.objects.select_related(
@@ -976,7 +967,7 @@ class PlayerSuspensionViewSet(viewsets.ModelViewSet):
         return Response(PlayerSuspensionSerializer(suspension).data)
 
 
-class MatchViewSet(viewsets.ModelViewSet):
+class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     """ViewSet para partidos"""
 
     queryset = Match.objects.all()
@@ -1892,7 +1883,7 @@ class MatchViewSet(viewsets.ModelViewSet):
         )
 
 
-class AdvertisementBannerViewSet(viewsets.ModelViewSet):
+class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     """
     ViewSet para Banners Publicitarios
     - LIST / RETRIEVE: Público (sin autenticación)
