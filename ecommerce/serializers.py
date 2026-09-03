@@ -1,7 +1,16 @@
 from django.utils import timezone
 from rest_framework import serializers
 
-from ecommerce.models import Category, Discount, Product, ProductDiscount, ShopOrder, ShopOrderItem, SubCategory
+from ecommerce.models import (
+    Category,
+    Discount,
+    Product,
+    ProductDiscount,
+    ShopInvoice,
+    ShopOrder,
+    ShopOrderItem,
+    SubCategory,
+)
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -186,14 +195,42 @@ class ShopOrderItemSerializer(serializers.ModelSerializer):
         ]
 
 
+class ShopInvoiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ShopInvoice
+        fields = [
+            "id",
+            "number",
+            "seller_name",
+            "buyer_name",
+            "buyer_email",
+            "payment_method",
+            "subtotal_cop",
+            "discount_cop",
+            "total_cop",
+            "comision_mercado_pago",
+            "iva_comision",
+            "monto_neto_recibido",
+            "status",
+            "issued_at",
+            "created_at",
+        ]
+
+
 class ShopOrderSerializer(serializers.ModelSerializer):
     items = ShopOrderItemSerializer(many=True, read_only=True)
+    invoice = ShopInvoiceSerializer(read_only=True, allow_null=True)
+    store_name = serializers.CharField(source="organization.name", read_only=True)
+    buyer_name = serializers.SerializerMethodField()
+    buyer_email = serializers.EmailField(source="buyer.email", read_only=True)
+    invoice_number = serializers.SerializerMethodField()
 
     class Meta:
         model = ShopOrder
         fields = [
             "id",
             "status",
+            "delivery_status",
             "subtotal_cop",
             "discount_cop",
             "total_cop",
@@ -202,5 +239,21 @@ class ShopOrderSerializer(serializers.ModelSerializer):
             "mp_payment_id",
             "fulfilled",
             "items",
+            "invoice",
+            "invoice_number",
+            "store_name",
+            "buyer_name",
+            "buyer_email",
             "created_at",
         ]
+
+    def get_buyer_name(self, obj):
+        buyer = obj.buyer
+        return (getattr(buyer, "full_name", None) or "").strip() or buyer.email
+
+    def get_invoice_number(self, obj):
+        try:
+            invoice = obj.invoice
+        except ShopInvoice.DoesNotExist:
+            return None
+        return invoice.number if invoice else None
