@@ -52,7 +52,7 @@ class Tournament(TimeStampedModel):
         ("finished", "Finalizado"),
         ("cancelled", "Cancelado"),
     ]
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft", db_index=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="active", db_index=True)
 
     MODERATION_STATUS_CHOICES = [
         ("approved", "Aprobada"),

@@ -168,6 +168,30 @@ class TournamentViewSet(viewsets.ModelViewSet):
             status=status.HTTP_204_NO_CONTENT,
         )
 
+    def update(self, request, *args, **kwargs):
+        """
+        Sobrescribe update/partial_update para proteger el campo `status`.
+        Solo Admins y Super Admins pueden modificar el estado del torneo.
+        Los usuarios normales (creadores/organizadores) reciben HTTP 403
+        si intentan cambiar `status`.
+        """
+        status_in_payload = "status" in request.data
+        if status_in_payload and not _is_sports_super_admin(request.user) and not user_is_platform_elevated(request.user):
+            return Response(
+                {"detail": "Solo un administrador tiene permisos para cambiar el estado de un torneo."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        status_in_payload = "status" in request.data
+        if status_in_payload and not _is_sports_super_admin(request.user) and not user_is_platform_elevated(request.user):
+            return Response(
+                {"detail": "Solo un administrador tiene permisos para cambiar el estado de un torneo."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().partial_update(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         from django.db import transaction
 
@@ -195,6 +219,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             tournament = serializer.save(
                 posted_by=user,
                 organization=org,
+                status="active",  # Siempre se crea como activo
             )
 
             if format_template and format_template not in ("", "legacy_league"):
