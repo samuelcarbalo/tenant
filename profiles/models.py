@@ -45,7 +45,7 @@ class Profile(TimeStampedModel):
     )
     
     # Avatar y preferencias
-    avatar = models.URLField(blank=True)
+    avatar = models.URLField(blank=True, max_length=500)
     preferences = models.JSONField(default=dict, blank=True)
     
     # Metadatos de completitud

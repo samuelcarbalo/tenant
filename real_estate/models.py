@@ -51,7 +51,12 @@ class RealEstateOffer(TimeStampedModel):
         ],
         null=True,
         blank=True,
-        help_text="Imagen principal de la propiedad (JPG, PNG, WebP)"
+        help_text="Imagen principal de la propiedad (JPG, PNG, WebP). Legacy file upload.",
+    )
+    image_url = models.URLField(
+        max_length=500,
+        blank=True,
+        help_text="URL pública de la imagen (archivo subido o enlace HTTPS).",
     )
 
     location = models.CharField(max_length=255, blank=True, db_index=True)
@@ -116,6 +121,18 @@ class RealEstateOffer(TimeStampedModel):
         if self.is_expired:
             return 0
         return (self.expires_at - timezone.now()).days
+
+    @property
+    def public_image_url(self):
+        url = (self.image_url or "").strip()
+        if url:
+            return url
+        if self.image:
+            try:
+                return self.image.url
+            except ValueError:
+                return ""
+        return ""
 
     def renew(self, days=30):
         """Renovar la oferta por X días más"""
