@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from payments.models import MercadoPagoConfig, PaymentOrder, TransaccionFacturacion
-from payments.packages import CREDIT_PACKAGES
+from payments.packages import CREDIT_PACKAGES, CREDIT_VALUE_COP
 
 
 class CreditPackageSerializer(serializers.Serializer):
@@ -44,6 +44,48 @@ class PaymentOrderSerializer(serializers.ModelSerializer):
             "credits_applied",
             "created_at",
         ]
+
+
+class PurchaseHistorySerializer(serializers.ModelSerializer):
+    """
+    Serializer enriquecido para el historial de compras del usuario.
+    Incluye nombre del paquete, descripción y mp_payment_id.
+    """
+
+    package_name = serializers.SerializerMethodField()
+    package_description = serializers.SerializerMethodField()
+    mp_payment_id = serializers.CharField(allow_null=True, allow_blank=True)
+    status_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PaymentOrder
+        fields = [
+            "id",
+            "package_id",
+            "package_name",
+            "package_description",
+            "credits_amount",
+            "amount_cop",
+            "mp_payment_id",
+            "status",
+            "status_display",
+            "credits_applied",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_package_name(self, obj: PaymentOrder) -> str:
+        pkg = CREDIT_PACKAGES.get(obj.package_id)
+        return pkg["name"] if pkg else obj.package_id
+
+    def get_package_description(self, obj: PaymentOrder) -> str:
+        pkg = CREDIT_PACKAGES.get(obj.package_id)
+        if pkg:
+            return f"{obj.credits_amount} créditos — {pkg['description']}"
+        return f"{obj.credits_amount} créditos"
+
+    def get_status_display(self, obj: PaymentOrder) -> str:
+        return dict(PaymentOrder.STATUS_CHOICES).get(obj.status, obj.status)
 
 
 class MercadoPagoConfigSerializer(serializers.ModelSerializer):

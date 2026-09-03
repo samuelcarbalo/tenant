@@ -181,6 +181,54 @@ class IsSuperUser(permissions.BasePermission):
         return bool(user and user.is_authenticated and user.is_superuser)
 
 
+class IsSportsSuperAdminOrOrgMember(permissions.BasePermission):
+    """
+    Permiso para el módulo de Deportes/Torneos.
+    - Super Admin (is_superuser o admin_level == 1): acceso total a cualquier método HTTP.
+    - Resto de usuarios autenticados: requieren pertenecer a la organización del tenant.
+    """
+
+    message = "No tienes permisos para realizar esta operación en el módulo de Deportes."
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        # Super Admin siempre pasa
+        if _is_sports_super_admin(request.user):
+            return True
+        # Resto: verificar membresía de organización (igual que IsOrganizationMember)
+        org_slug = request.headers.get("X-Tenant")
+        org_id = request.headers.get("X-Organization-ID")
+        if org_slug:
+            return request.user.organization and request.user.organization.slug == org_slug
+        if not org_id:
+            org_id = getattr(request.user, "organization_id", None)
+        if not org_id:
+            return False
+        return str(request.user.organization_id) == str(org_id)
+
+    def has_object_permission(self, request, view, obj):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        # Super Admin: acceso total a cualquier objeto
+        if _is_sports_super_admin(request.user):
+            return True
+        return True  # La verificación de objeto se delega a la vista si es necesario
+
+
+def _is_sports_super_admin(user) -> bool:
+    """Retorna True si el usuario es Super Admin con acceso total al módulo de Deportes."""
+    if not user:
+        return False
+    if getattr(user, "is_superuser", False):
+        return True
+    if user_admin_level(user) == 1:
+        return True
+    if getattr(user, "role", None) in ("SUPER_ADMIN", "super_admin"):
+        return True
+    return False
+
+
 class IsMercadoPagoConfigAdmin(permissions.BasePermission):
     """IsAdminUser (is_staff) o IsSuperUser (is_superuser) — credenciales Mercado Pago."""
 

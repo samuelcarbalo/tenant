@@ -67,7 +67,15 @@ from .services.structure import (
 )
 from .services.advancement import advance_phase as run_advance_phase, SourceResolutionError
 from sports.models import BracketNode
-from core.permissions import IsOrganizationMember, IsCoachOfTeam, resolve_request_organization, user_can_manage_content, user_is_platform_elevated
+from core.permissions import (
+    IsOrganizationMember,
+    IsCoachOfTeam,
+    IsSportsSuperAdminOrOrgMember,
+    _is_sports_super_admin,
+    resolve_request_organization,
+    user_can_manage_content,
+    user_is_platform_elevated,
+)
 
 
 class TournamentViewSet(viewsets.ModelViewSet):
@@ -101,9 +109,13 @@ class TournamentViewSet(viewsets.ModelViewSet):
             "bracket",
         ]:
             return [AllowAny()]
-        return [IsAuthenticated(), IsOrganizationMember()]
+        # Super Admin o miembro de organización pueden mutar torneos
+        return [IsAuthenticated(), IsSportsSuperAdminOrOrgMember()]
 
     def get_queryset(self):
+        user = self.request.user
+        is_super_admin = user.is_authenticated and _is_sports_super_admin(user)
+
         queryset = Tournament.objects.select_related("organization", "posted_by").annotate(
             teams_count=Count("teams", distinct=True),
             matches_count=Count("matches", distinct=True),
@@ -124,17 +136,18 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if org_slug:
             queryset = queryset.filter(organization__slug=org_slug)
 
-        # Usuarios no autenticados solo ven activos/finalizados
-        if not self.request.user.is_authenticated:
-            queryset = queryset.filter(
-                status__in=["active", "finished", "cancelled", "draft", "registration"]
-            )
+        # Super Admin: acceso total, ve todos los torneos sin restricciones de visibilidad
+        if is_super_admin:
+            return queryset.order_by("-start_date")
 
-        # 2. Lógica de visibilidad (Aquí está el truco)
-        # Si la acción NO es 'my_tournaments', aplicamos restricciones de visibilidad pública
+        # Usuarios no autenticados solo ven activos/finalizados aprobados
+        if not user.is_authenticated:
+            queryset = queryset.filter(status__in=["active", "finished"])
+            queryset = queryset.filter(moderation_status="approved")
+            return queryset.order_by("-start_date")
+
+        # Lógica de visibilidad para usuarios normales autenticados
         if self.action != "my_tournaments":
-            if not self.request.user.is_authenticated:
-                queryset = queryset.filter(status__in=["active", "finished"])
             queryset = queryset.filter(moderation_status="approved")
 
         return queryset.order_by("-start_date")
@@ -154,6 +167,30 @@ class TournamentViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_204_NO_CONTENT,
         )
+
+    def update(self, request, *args, **kwargs):
+        """
+        Sobrescribe update/partial_update para proteger el campo `status`.
+        Solo Admins y Super Admins pueden modificar el estado del torneo.
+        Los usuarios normales (creadores/organizadores) reciben HTTP 403
+        si intentan cambiar `status`.
+        """
+        status_in_payload = "status" in request.data
+        if status_in_payload and not _is_sports_super_admin(request.user) and not user_is_platform_elevated(request.user):
+            return Response(
+                {"detail": "Solo un administrador tiene permisos para cambiar el estado de un torneo."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        status_in_payload = "status" in request.data
+        if status_in_payload and not _is_sports_super_admin(request.user) and not user_is_platform_elevated(request.user):
+            return Response(
+                {"detail": "Solo un administrador tiene permisos para cambiar el estado de un torneo."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().partial_update(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         from django.db import transaction
@@ -182,6 +219,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             tournament = serializer.save(
                 posted_by=user,
                 organization=org,
+                status="active",  # Siempre se crea como activo
             )
 
             if format_template and format_template not in ("", "legacy_league"):
@@ -454,10 +492,15 @@ class TournamentViewSet(viewsets.ModelViewSet):
             )
 
         queryset = self.get_queryset()
-        if not user_is_platform_elevated(user):
+        if _is_sports_super_admin(user):
+            # Super Admin: ve TODOS los torneos de la plataforma (incluso sin aprobar)
+            mine = request.query_params.get("mine", "false")
+            if mine.lower() == "true":
+                queryset = queryset.filter(posted_by=user)
+        elif not user_is_platform_elevated(user):
             queryset = queryset.filter(posted_by=user)
         else:
-            # Plataforma: ver todos, o filtrar por los propios si se pide
+            # Admin/staff de plataforma: ver todos aprobados, o filtrar por los propios si se pide
             mine = request.query_params.get("mine", "false")
             if mine.lower() == "true":
                 queryset = queryset.filter(posted_by=user)
@@ -612,9 +655,11 @@ class TeamViewSet(viewsets.ModelViewSet):
             "teams",
         ]:
             return [AllowAny()]
-        return [IsAuthenticated(), IsOrganizationMember()]
+        # Super Admin o miembro de organización pueden crear/editar/eliminar equipos
+        return [IsAuthenticated(), IsSportsSuperAdminOrOrgMember()]
 
     def get_queryset(self):
+        user = self.request.user
         queryset = Team.objects.select_related("tournament", "organization").annotate(
             players_count=Count("players", filter=Q(players__is_active=True))
         )
@@ -624,11 +669,14 @@ class TeamViewSet(viewsets.ModelViewSet):
         if tournament_slug:
             queryset = queryset.filter(tournament__slug=tournament_slug)
 
-        # Filtrar por organización
-        if self.request.user.is_authenticated and not self.request.user.is_superuser:
-            queryset = queryset.filter(organization=self.request.user.organization)
+        # Super Admin: ve todos los equipos sin restricción de organización
+        if user.is_authenticated and _is_sports_super_admin(user):
+            return queryset.order_by("-points", "name")
 
-        # Filtrar por estado
+        # Usuarios normales autenticados: filtrar por su organización
+        if user.is_authenticated:
+            queryset = queryset.filter(organization=user.organization)
+
         return queryset.order_by("-points", "name")
 
     @action(detail=True, methods=["get"], permission_classes=[AllowAny])
@@ -685,7 +733,10 @@ class PlayerViewSet(viewsets.ModelViewSet):
         # Listar/ver detalle es público
         if self.action in ["list", "retrieve", "stats"]:
             return [AllowAny()]
-        # Crear/actualizar/eliminar requiere ser coach del equipo
+        # Super Admin: acceso total. Otros usuarios: deben ser coach del equipo
+        user = getattr(self.request, "user", None)
+        if user and user.is_authenticated and _is_sports_super_admin(user):
+            return [IsAuthenticated()]
         return [IsAuthenticated(), IsCoachOfTeam()]
 
     def get_queryset(self):
@@ -728,12 +779,12 @@ class PlayerViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def destroy(self, request, *args, **kwargs):
-        """Eliminar jugador - solo coach puede eliminar"""
+        """Eliminar jugador - coach del equipo o Super Admin pueden eliminar"""
         player = self.get_object()
 
-        if not IsCoachOfTeam().has_object_permission(request, self, player):
+        if not _is_sports_super_admin(request.user) and not IsCoachOfTeam().has_object_permission(request, self, player):
             return Response(
-                {"error": "Solo el coach del equipo puede eliminar jugadores"},
+                {"error": "Solo el coach del equipo o un Super Admin puede eliminar jugadores"},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -861,12 +912,13 @@ class PlayerSuspensionViewSet(viewsets.ModelViewSet):
         player_id = self.request.query_params.get("player")
         if player_id:
             queryset = queryset.filter(player_id=player_id)
-        if self.request.user.is_authenticated and not self.request.user.is_superuser and self.request.user.role not in {"admin", "manager"}:
+        # Super Admin: ve suspensiones de toda la plataforma sin restricción de organización
+        if self.request.user.is_authenticated and not _is_sports_super_admin(self.request.user) and self.request.user.role not in {"admin", "manager"}:
             queryset = queryset.filter(tournament__organization=self.request.user.organization)
         return queryset.order_by("-created_at")
 
     def _can_manage(self, request):
-        return request.user.is_superuser or request.user.role in {"admin", "manager"}
+        return _is_sports_super_admin(request.user) or request.user.role in {"admin", "manager"}
 
     def create(self, request, *args, **kwargs):
         if not self._can_manage(request):
@@ -939,7 +991,8 @@ class MatchViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ["list", "retrieve"]:
             return [AllowAny()]
-        return [IsAuthenticated(), IsOrganizationMember()]
+        # Super Admin o miembro de organización pueden mutar partidos
+        return [IsAuthenticated(), IsSportsSuperAdminOrOrgMember()]
 
     def _direction_params(self):
         """Parámetros de búsqueda asistida por cercanía de fecha."""
@@ -1116,7 +1169,7 @@ class MatchViewSet(viewsets.ModelViewSet):
         match = self.get_object()
 
         if (
-            not request.user.is_superuser
+            not _is_sports_super_admin(request.user)
             and request.user.organization != match.tournament.organization
         ):
             return Response(
@@ -1311,7 +1364,7 @@ class MatchViewSet(viewsets.ModelViewSet):
         match = self.get_object()
 
         if (
-            not request.user.is_superuser
+            not _is_sports_super_admin(request.user)
             and request.user.organization != match.tournament.organization
         ):
             return Response(
