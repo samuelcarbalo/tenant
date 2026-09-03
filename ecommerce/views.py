@@ -39,9 +39,12 @@ from ecommerce.services import (
     product_detail_cache_key,
 )
 from core.permissions import (
+    CanManageShopProduct,
     resolve_request_organization,
     user_can_manage_content,
+    user_can_manage_shop_product,
     user_is_platform_elevated,
+    user_is_shop_super_admin,
 )
 from jobs.permissions import IsManagerOfOrganization, IsManagerOrReadOnly
 from payments.services.mercadopago_service import MercadoPagoService
@@ -258,8 +261,14 @@ class SubCategoryViewSet(viewsets.ModelViewSet):
         serializer.save(organization=org)
 
 
+SHOP_PRODUCT_FORBIDDEN = {
+    "message": "No tienes permisos para editar o eliminar este producto.",
+    "detail": "No tienes permisos para editar o eliminar este producto.",
+}
+
+
 class ProductViewSet(viewsets.ModelViewSet):
-    permission_classes = [PublicReadManagerWrite, IsManagerOfOrganization]
+    permission_classes = [CanManageShopProduct]
     lookup_field = "slug"
     filterset_class = ProductFilter
     search_fields = ["name", "description", "short_description", "sku"]
@@ -276,13 +285,15 @@ class ProductViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         try:
             qs = Product.objects.select_related(
-                "category", "subcategory", "organization"
+                "category", "subcategory", "organization", "created_by"
             ).prefetch_related("product_discounts")
             org = _request_org(self.request)
             if org:
                 qs = qs.filter(organization=org)
             if self.action in ("list", "retrieve"):
                 user = self.request.user
+                if user_is_shop_super_admin(user):
+                    return qs
                 is_manager = (
                     getattr(user, "is_authenticated", False)
                     and getattr(user, "role", None) == "manager"
@@ -309,11 +320,17 @@ class ProductViewSet(viewsets.ModelViewSet):
             logger.error("ProductViewSet.list failed: %s", e, exc_info=True)
             return _catalog_error(e)
 
+    def _forbid_if_cannot_manage(self, product):
+        if user_can_manage_shop_product(self.request.user, product):
+            return None
+        return Response(SHOP_PRODUCT_FORBIDDEN, status=status.HTTP_403_FORBIDDEN)
+
     def retrieve(self, request, *args, **kwargs):
         try:
             org = _request_org(request)
             slug = kwargs.get("slug")
-            if org and slug:
+            # No cachear para usuarios autenticados: can_manage es por usuario.
+            if org and slug and not (request.user and request.user.is_authenticated):
                 key = product_detail_cache_key(str(org.id), slug)
                 try:
                     cached = cache.get(key)
@@ -349,8 +366,29 @@ class ProductViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"detail": "No se pudo resolver la organización (cabecera X-Tenant)."}
             )
-        product = serializer.save(organization=org)
+        product = serializer.save(organization=org, created_by=self.request.user)
         invalidate_catalog_cache(str(org.id), product.slug)
+
+    def update(self, request, *args, **kwargs):
+        product = self.get_object()
+        denied = self._forbid_if_cannot_manage(product)
+        if denied:
+            return denied
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        product = self.get_object()
+        denied = self._forbid_if_cannot_manage(product)
+        if denied:
+            return denied
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        product = self.get_object()
+        denied = self._forbid_if_cannot_manage(product)
+        if denied:
+            return denied
+        return super().destroy(request, *args, **kwargs)
 
     def perform_update(self, serializer):
         product = serializer.save()
@@ -361,6 +399,39 @@ class ProductViewSet(viewsets.ModelViewSet):
         slug = instance.slug
         instance.delete()
         invalidate_catalog_cache(org_id, slug)
+
+    @action(detail=True, methods=["patch"], url_path="status")
+    def set_status(self, request, slug=None):
+        product = self.get_object()
+        denied = self._forbid_if_cannot_manage(product)
+        if denied:
+            return denied
+        data = request.data or {}
+        update_fields = ["updated_at"]
+        if "is_published" in data:
+            product.is_published = bool(data.get("is_published"))
+            update_fields.append("is_published")
+        if "is_active" in data:
+            product.is_active = bool(data.get("is_active"))
+            update_fields.append("is_active")
+        if "stock" in data:
+            try:
+                stock = int(data.get("stock"))
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "Stock inválido."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if stock < 0:
+                return Response(
+                    {"detail": "Stock inválido."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            product.stock = stock
+            update_fields.append("stock")
+        product.save(update_fields=update_fields)
+        invalidate_catalog_cache(str(product.organization_id), product.slug)
+        return Response(ProductDetailSerializer(product, context={"request": request}).data)
 
 
 class DiscountViewSet(viewsets.ModelViewSet):

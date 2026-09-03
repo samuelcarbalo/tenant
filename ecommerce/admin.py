@@ -53,9 +53,11 @@ class ProductAdmin(admin.ModelAdmin):
         "is_published",
         "is_featured",
         "organization",
+        "created_by",
     )
     list_filter = ("organization", "is_published", "is_featured", "category")
     search_fields = ("name", "sku", "slug")
+    raw_id_fields = ("created_by",)
     prepopulated_fields = {"slug": ("name",)}
 
 

@@ -1,6 +1,7 @@
 from django.utils import timezone
 from rest_framework import serializers
 
+from core.permissions import user_can_manage_shop_product
 from ecommerce.models import (
     Category,
     Discount,
@@ -53,6 +54,8 @@ class ProductListSerializer(serializers.ModelSerializer):
     subcategory_name = serializers.SerializerMethodField()
     subcategory_slug = serializers.SerializerMethodField()
     active_discount = serializers.SerializerMethodField()
+    created_by = serializers.UUIDField(source="created_by_id", read_only=True, allow_null=True)
+    can_manage = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -67,6 +70,8 @@ class ProductListSerializer(serializers.ModelSerializer):
             "stock",
             "image_url",
             "is_featured",
+            "is_published",
+            "is_active",
             "category",
             "category_name",
             "category_slug",
@@ -74,8 +79,15 @@ class ProductListSerializer(serializers.ModelSerializer):
             "subcategory_name",
             "subcategory_slug",
             "active_discount",
+            "created_by",
+            "can_manage",
             "created_at",
         ]
+
+    def get_can_manage(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return user_can_manage_shop_product(user, obj)
 
     def get_category_name(self, obj):
         category = getattr(obj, "category", None)
@@ -125,13 +137,16 @@ class ProductListSerializer(serializers.ModelSerializer):
 
 class ProductDetailSerializer(ProductListSerializer):
     class Meta(ProductListSerializer.Meta):
-        fields = ProductListSerializer.Meta.fields + ["description", "is_published", "updated_at"]
+        fields = ProductListSerializer.Meta.fields + ["description", "updated_at"]
 
 
 class ProductWriteSerializer(serializers.ModelSerializer):
+    created_by = serializers.UUIDField(source="created_by_id", read_only=True, allow_null=True)
+
     class Meta:
         model = Product
         fields = [
+            "id",
             "name",
             "slug",
             "description",
@@ -146,7 +161,9 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "category",
             "subcategory",
             "is_active",
+            "created_by",
         ]
+        read_only_fields = ["id", "created_by"]
         extra_kwargs = {"slug": {"required": False, "allow_blank": True}}
 
 

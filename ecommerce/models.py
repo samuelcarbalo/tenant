@@ -126,6 +126,13 @@ class Product(TimeStampedModel):
     image_url = models.URLField(blank=True)
     is_featured = models.BooleanField(default=False, db_index=True)
     is_published = models.BooleanField(default=True, db_index=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shop_products_created",
+    )
 
     class Meta:
         db_table = "ecommerce_products"
