@@ -75,7 +75,7 @@ class ProfileCreateUpdateSerializer(serializers.ModelSerializer):
             "department": {"required": False, "allow_blank": True},
             "job_title": {"required": False, "allow_blank": True},
             "birth_date": {"required": False, "allow_null": True},
-            "avatar": {"required": False, "allow_blank": True},
+            "avatar": {"required": False, "allow_blank": True, "max_length": 500},
             "preferences": {"required": False},
             "dynamic_data": {"required": False},
         }
