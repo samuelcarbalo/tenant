@@ -70,6 +70,8 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                     "is_staff": user.is_staff,
                     "credits": user.credits,
                     "is_unlimited_credits": user.is_unlimited_credits,
+                    "sports_module_active": user.sports_module_active,
+                    "sports_module_expires_at": user.sports_module_expires_at,
                     "organization": {
                         "id": str(user.organization.id),
                         "name": user.organization.name,
@@ -111,6 +113,8 @@ class RegisterView(generics.CreateAPIView):
                     "company_name": user.company_name,
                     "role": user.role,
                     "credits": user.credits,
+                    "sports_module_active": user.sports_module_active,
+                    "sports_module_expires_at": user.sports_module_expires_at,
                     "organization": {
                         "id": str(user.organization.id),
                         "name": user.organization.name,
@@ -218,6 +222,8 @@ def verify_token(request):
                 "is_staff": user.is_staff,
                 "credits": user.credits,
                 "is_unlimited_credits": user.is_unlimited_credits,
+                "sports_module_active": user.sports_module_active,
+                "sports_module_expires_at": user.sports_module_expires_at,
                 "user_type": user.user_type,
                 "organization": {
                     "id": str(user.organization.id) if user.organization else None,

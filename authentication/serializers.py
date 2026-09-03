@@ -242,6 +242,8 @@ class UserSerializer(serializers.ModelSerializer):
             "last_login",
             "company_name",
             "credits",
+            "sports_module_active",
+            "sports_module_expires_at",
             "user_type",
         ]
         read_only_fields = [
@@ -252,7 +254,15 @@ class UserSerializer(serializers.ModelSerializer):
             "is_superuser",
             "is_staff",
             "admin_level",
+            "sports_module_active",
+            "sports_module_expires_at",
         ]
+
+    def to_representation(self, instance):
+        from authentication.sports_subscription import sync_sports_module_status
+
+        sync_sports_module_status(instance)
+        return super().to_representation(instance)
 
 
 class PasswordChangeSerializer(serializers.Serializer):  # Cambia a Serializer

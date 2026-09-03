@@ -40,6 +40,8 @@ urlpatterns = [
     path("api/v1/test-email/", test_email_api, name="test-email-v1"),
     path("admin/", admin.site.urls),
     path("api/v1/auth/", include("authentication.urls")),
+    path("api/v1/subscriptions/", include("authentication.subscription_urls")),
+    path("api/subscriptions/", include("authentication.subscription_urls")),
     path("api/v1/admin/", include("authentication.admin_urls")),
     path("api/v1/profiles/", include("profiles.urls")),
     path(

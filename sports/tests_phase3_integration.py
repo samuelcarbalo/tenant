@@ -1,5 +1,7 @@
 """Pruebas Fase 3: avance a eliminatoria y bracket."""
 
+from datetime import timedelta
+
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -26,6 +28,8 @@ class Phase3IntegrationTests(TestCase):
             organization=self.org,
             role="manager",
             credits=100,
+            sports_module_active=True,
+            sports_module_expires_at=timezone.now() + timedelta(days=30),
         )
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
