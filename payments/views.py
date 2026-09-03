@@ -16,6 +16,7 @@ from payments.serializers import (
     CreditPackageSerializer,
     MercadoPagoConfigSerializer,
     PaymentOrderSerializer,
+    PurchaseHistorySerializer,
     TransaccionFacturacionSerializer,
 )
 from payments.services.mercadopago_service import MercadoPagoService
@@ -98,6 +99,21 @@ class PaymentViewSet(viewsets.ViewSet):
     def my_orders(self, request):
         orders = PaymentOrder.objects.filter(user=request.user)[:20]
         return Response(PaymentOrderSerializer(orders, many=True).data)
+
+    @action(detail=False, methods=["get"], url_path="my-purchases")
+    def my_purchases(self, request):
+        """
+        Historial completo de compras del usuario autenticado.
+        GET /api/v1/payments/my-purchases/
+        Devuelve las órdenes ordenadas de la más reciente a la más antigua,
+        con nombre de paquete, descripción, monto, estado y ID de MP.
+        """
+        orders = (
+            PaymentOrder.objects.filter(user=request.user)
+            .order_by("-created_at")
+        )
+        serializer = PurchaseHistorySerializer(orders, many=True)
+        return Response(serializer.data)
 
     @action(
         detail=False,
