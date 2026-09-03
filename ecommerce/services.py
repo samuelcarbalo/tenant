@@ -114,6 +114,9 @@ def create_shop_order(
         if not updated:
             raise ValueError(f"Stock insuficiente para {product.name}.")
 
+    from ecommerce.invoices import sync_shop_invoice
+
+    sync_shop_invoice(order)
     return order
 
 
@@ -128,6 +131,10 @@ def fulfill_shop_order(order: ShopOrder, mp_payment_id: str) -> bool:
     locked.mp_payment_id = str(mp_payment_id)
     locked.fulfilled = True
     locked.save(update_fields=["status", "mp_payment_id", "fulfilled", "updated_at"])
+
+    from ecommerce.invoices import sync_shop_invoice
+
+    sync_shop_invoice(locked)
 
     if locked.discount_id:
         Discount.objects.filter(pk=locked.discount_id).update(used_count=F("used_count") + 1)
@@ -152,3 +159,6 @@ def mark_shop_order_failed(order: ShopOrder, status: str, mp_payment_id: str) ->
     locked.status = status if status in dict(ShopOrder.STATUS_CHOICES) else "rejected"
     locked.mp_payment_id = str(mp_payment_id)
     locked.save(update_fields=["status", "mp_payment_id", "updated_at"])
+    from ecommerce.invoices import sync_shop_invoice
+
+    sync_shop_invoice(locked)

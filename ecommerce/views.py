@@ -4,7 +4,7 @@ from django.core.cache import cache
 from django.db import DatabaseError
 from django.db.utils import OperationalError, ProgrammingError
 from django.http import Http404
-from django.db.models import Prefetch
+from django.db.models import Avg, Count, Prefetch, Q, Sum
 from django_filters import rest_framework as filters
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -12,7 +12,16 @@ from rest_framework.exceptions import APIException
 from rest_framework.permissions import AllowAny, IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 
-from ecommerce.models import Category, Discount, Product, ProductDiscount, ShopOrder, ShopOrderItem, SubCategory
+from ecommerce.models import (
+    Category,
+    Discount,
+    Product,
+    ProductDiscount,
+    ShopInvoice,
+    ShopOrder,
+    ShopOrderItem,
+    SubCategory,
+)
 from ecommerce.serializers import (
     CategorySerializer,
     CheckoutSerializer,
@@ -29,7 +38,14 @@ from ecommerce.services import (
     invalidate_catalog_cache,
     product_detail_cache_key,
 )
-from core.permissions import resolve_request_organization, user_can_manage_content
+from core.permissions import (
+    CanManageShopProduct,
+    resolve_request_organization,
+    user_can_manage_content,
+    user_can_manage_shop_product,
+    user_is_platform_elevated,
+    user_is_shop_super_admin,
+)
 from jobs.permissions import IsManagerOfOrganization, IsManagerOrReadOnly
 from payments.services.mercadopago_service import MercadoPagoService
 
@@ -245,8 +261,14 @@ class SubCategoryViewSet(viewsets.ModelViewSet):
         serializer.save(organization=org)
 
 
+SHOP_PRODUCT_FORBIDDEN = {
+    "message": "No tienes permisos para editar o eliminar este producto.",
+    "detail": "No tienes permisos para editar o eliminar este producto.",
+}
+
+
 class ProductViewSet(viewsets.ModelViewSet):
-    permission_classes = [PublicReadManagerWrite, IsManagerOfOrganization]
+    permission_classes = [CanManageShopProduct]
     lookup_field = "slug"
     filterset_class = ProductFilter
     search_fields = ["name", "description", "short_description", "sku"]
@@ -263,13 +285,15 @@ class ProductViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         try:
             qs = Product.objects.select_related(
-                "category", "subcategory", "organization"
+                "category", "subcategory", "organization", "created_by"
             ).prefetch_related("product_discounts")
             org = _request_org(self.request)
             if org:
                 qs = qs.filter(organization=org)
             if self.action in ("list", "retrieve"):
                 user = self.request.user
+                if user_is_shop_super_admin(user):
+                    return qs
                 is_manager = (
                     getattr(user, "is_authenticated", False)
                     and getattr(user, "role", None) == "manager"
@@ -296,11 +320,17 @@ class ProductViewSet(viewsets.ModelViewSet):
             logger.error("ProductViewSet.list failed: %s", e, exc_info=True)
             return _catalog_error(e)
 
+    def _forbid_if_cannot_manage(self, product):
+        if user_can_manage_shop_product(self.request.user, product):
+            return None
+        return Response(SHOP_PRODUCT_FORBIDDEN, status=status.HTTP_403_FORBIDDEN)
+
     def retrieve(self, request, *args, **kwargs):
         try:
             org = _request_org(request)
             slug = kwargs.get("slug")
-            if org and slug:
+            # No cachear para usuarios autenticados: can_manage es por usuario.
+            if org and slug and not (request.user and request.user.is_authenticated):
                 key = product_detail_cache_key(str(org.id), slug)
                 try:
                     cached = cache.get(key)
@@ -336,8 +366,29 @@ class ProductViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"detail": "No se pudo resolver la organización (cabecera X-Tenant)."}
             )
-        product = serializer.save(organization=org)
+        product = serializer.save(organization=org, created_by=self.request.user)
         invalidate_catalog_cache(str(org.id), product.slug)
+
+    def update(self, request, *args, **kwargs):
+        product = self.get_object()
+        denied = self._forbid_if_cannot_manage(product)
+        if denied:
+            return denied
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        product = self.get_object()
+        denied = self._forbid_if_cannot_manage(product)
+        if denied:
+            return denied
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        product = self.get_object()
+        denied = self._forbid_if_cannot_manage(product)
+        if denied:
+            return denied
+        return super().destroy(request, *args, **kwargs)
 
     def perform_update(self, serializer):
         product = serializer.save()
@@ -348,6 +399,39 @@ class ProductViewSet(viewsets.ModelViewSet):
         slug = instance.slug
         instance.delete()
         invalidate_catalog_cache(org_id, slug)
+
+    @action(detail=True, methods=["patch"], url_path="status")
+    def set_status(self, request, slug=None):
+        product = self.get_object()
+        denied = self._forbid_if_cannot_manage(product)
+        if denied:
+            return denied
+        data = request.data or {}
+        update_fields = ["updated_at"]
+        if "is_published" in data:
+            product.is_published = bool(data.get("is_published"))
+            update_fields.append("is_published")
+        if "is_active" in data:
+            product.is_active = bool(data.get("is_active"))
+            update_fields.append("is_active")
+        if "stock" in data:
+            try:
+                stock = int(data.get("stock"))
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "Stock inválido."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if stock < 0:
+                return Response(
+                    {"detail": "Stock inválido."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            product.stock = stock
+            update_fields.append("stock")
+        product.save(update_fields=update_fields)
+        invalidate_catalog_cache(str(product.organization_id), product.slug)
+        return Response(ProductDetailSerializer(product, context={"request": request}).data)
 
 
 class DiscountViewSet(viewsets.ModelViewSet):
@@ -377,14 +461,136 @@ class ShopOrderViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ShopOrderSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        return (
-            ShopOrder.objects.filter(buyer=self.request.user)
-            .prefetch_related(
-                Prefetch("items", queryset=ShopOrderItem.objects.select_related("product"))
-            )
-            .order_by("-created_at")
+    def _base_qs(self):
+        return ShopOrder.objects.select_related(
+            "buyer", "organization", "invoice"
+        ).prefetch_related(
+            Prefetch("items", queryset=ShopOrderItem.objects.select_related("product"))
         )
+
+    def get_queryset(self):
+        qs = self._base_qs().order_by("-created_at")
+        user = self.request.user
+        if self.action in ("sales", "metrics", "set_delivery"):
+            if not user_can_manage_content(user):
+                return qs.none()
+            if user_is_platform_elevated(user):
+                return qs
+            org = resolve_request_organization(self.request) or getattr(user, "organization", None)
+            if not org:
+                return qs.none()
+            return qs.filter(organization=org)
+        if self.action == "retrieve" and user_can_manage_content(user):
+            if user_is_platform_elevated(user):
+                return qs
+            org = resolve_request_organization(self.request) or getattr(user, "organization", None)
+            if org:
+                return qs.filter(Q(buyer=user) | Q(organization=org))
+        return qs.filter(buyer=user)
+
+    def retrieve(self, request, *args, **kwargs):
+        order = self.get_object()
+        from ecommerce.invoices import sync_shop_invoice
+
+        if not ShopInvoice.objects.filter(order=order).exists():
+            try:
+                sync_shop_invoice(order)
+                order.refresh_from_db()
+            except Exception:
+                logger.exception("invoice sync failed order=%s", order.id)
+        return Response(ShopOrderSerializer(order).data)
+
+    def _apply_sales_filters(self, qs):
+        params = self.request.query_params
+        status_val = (params.get("status") or "").strip()
+        delivery = (params.get("delivery_status") or "").strip()
+        search = (params.get("search") or "").strip()
+        date_from = (params.get("date_from") or "").strip()
+        date_to = (params.get("date_to") or "").strip()
+        if status_val:
+            qs = qs.filter(status=status_val)
+        if delivery:
+            qs = qs.filter(delivery_status=delivery)
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
+        if search:
+            qs = qs.filter(
+                Q(buyer__email__icontains=search)
+                | Q(buyer__first_name__icontains=search)
+                | Q(buyer__last_name__icontains=search)
+                | Q(invoice__number__icontains=search)
+                | Q(items__product_name__icontains=search)
+            ).distinct()
+        return qs
+
+    @action(detail=False, methods=["get"], url_path="sales")
+    def sales(self, request):
+        if not user_can_manage_content(request.user):
+            return Response(
+                {"detail": "No tienes permiso para ver las ventas de la tienda."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        qs = self._apply_sales_filters(self.get_queryset())
+        page = self.paginate_queryset(qs)
+        serializer = ShopOrderSerializer(page if page is not None else qs, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], url_path="metrics")
+    def metrics(self, request):
+        if not user_can_manage_content(request.user):
+            return Response(
+                {"detail": "No tienes permiso para ver métricas de ventas."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        qs = self.get_queryset().filter(status="approved")
+        date_from = (request.query_params.get("date_from") or "").strip()
+        date_to = (request.query_params.get("date_to") or "").strip()
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
+        agg = qs.aggregate(
+            total_sales=Sum("total_cop"),
+            order_count=Count("id"),
+            avg_ticket=Avg("total_cop"),
+        )
+        top = list(
+            ShopOrderItem.objects.filter(order__in=qs)
+            .values("product_name")
+            .annotate(quantity=Sum("quantity"), revenue=Sum("line_total_cop"))
+            .order_by("-quantity")[:8]
+        )
+        return Response(
+            {
+                "total_sales_cop": agg["total_sales"] or 0,
+                "order_count": agg["order_count"] or 0,
+                "avg_ticket_cop": agg["avg_ticket"] or 0,
+                "top_sellers": top,
+            }
+        )
+
+    @action(detail=True, methods=["patch"], url_path="delivery")
+    def set_delivery(self, request, pk=None):
+        if not user_can_manage_content(request.user):
+            return Response(
+                {"detail": "No tienes permiso para actualizar el envío."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        order = self.get_object()
+        next_status = (request.data.get("delivery_status") or "").strip()
+        allowed = {c[0] for c in ShopOrder.DELIVERY_CHOICES}
+        if next_status not in allowed:
+            return Response(
+                {"detail": "Estado de envío inválido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        order.delivery_status = next_status
+        order.save(update_fields=["delivery_status", "updated_at"])
+        return Response(ShopOrderSerializer(order).data)
 
     @action(detail=False, methods=["post"], url_path="checkout")
     def checkout(self, request):

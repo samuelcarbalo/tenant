@@ -126,6 +126,13 @@ class Product(TimeStampedModel):
     image_url = models.URLField(blank=True)
     is_featured = models.BooleanField(default=False, db_index=True)
     is_published = models.BooleanField(default=True, db_index=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shop_products_created",
+    )
 
     class Meta:
         db_table = "ecommerce_products"
@@ -360,6 +367,19 @@ class ShopOrder(TimeStampedModel):
     mp_payment_id = models.CharField(max_length=64, blank=True, db_index=True)
     fulfilled = models.BooleanField(default=False, db_index=True)
     notes = models.CharField(max_length=255, blank=True)
+    DELIVERY_CHOICES = [
+        ("pending", "Pendiente"),
+        ("processing", "En preparación"),
+        ("shipped", "Enviado"),
+        ("delivered", "Entregado"),
+        ("cancelled", "Cancelado"),
+    ]
+    delivery_status = models.CharField(
+        max_length=20,
+        choices=DELIVERY_CHOICES,
+        default="pending",
+        db_index=True,
+    )
 
     class Meta:
         db_table = "ecommerce_orders"
@@ -415,6 +435,42 @@ class ShopOrderItem(models.Model):
         if not self.id:
             self.id = _uuid.uuid4()
         super().save(*args, **kwargs)
+
+
+class ShopInvoice(TimeStampedModel):
+    """Factura de compra de tienda (emisor = organización, receptor = comprador)."""
+
+    STATUS_CHOICES = [
+        ("pending", "Pendiente de pago"),
+        ("issued", "Pagada"),
+        ("void", "Anulada"),
+    ]
+
+    order = models.OneToOneField(
+        ShopOrder,
+        on_delete=models.CASCADE,
+        related_name="invoice",
+    )
+    number = models.CharField(max_length=32, unique=True, db_index=True)
+    seller_name = models.CharField(max_length=255)
+    buyer_name = models.CharField(max_length=255)
+    buyer_email = models.EmailField()
+    payment_method = models.CharField(max_length=64, default="Mercado Pago")
+    subtotal_cop = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    discount_cop = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    total_cop = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    comision_mercado_pago = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    iva_comision = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    monto_neto_recibido = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending", db_index=True)
+    issued_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "ecommerce_invoices"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.number
 
 
 class StoreSettings(TimeStampedModel):

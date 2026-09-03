@@ -24,6 +24,45 @@ def user_is_super_admin_l1(user) -> bool:
     return bool(getattr(user, "is_superuser", False))
 
 
+def user_is_super_admin_l2(user) -> bool:
+    """Administrador Delegado (Nivel 2)."""
+    return user_admin_level(user) == 2
+
+
+def user_is_shop_super_admin(user) -> bool:
+    """Super Admin Nivel 1 o Nivel 2: moderación global de la tienda."""
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    role = str(getattr(user, "role", "") or "")
+    if role in ("SUPER_ADMIN_L1", "SUPER_ADMIN_L2", "SUPER_ADMIN", "super_admin"):
+        return True
+    return user_is_super_admin_l1(user) or user_is_super_admin_l2(user)
+
+
+SHOP_PRODUCT_FORBIDDEN_MESSAGE = (
+    "No tienes permisos para editar o eliminar este producto."
+)
+
+
+def user_can_manage_shop_product(user, product) -> bool:
+    """
+    Escritura sobre un producto: dueño (created_by) o Super Admin L1/L2.
+    Productos legacy sin created_by: el manager de la misma organización
+    se trata como operador de la tienda.
+    """
+    if not user or not getattr(user, "is_authenticated", False) or product is None:
+        return False
+    if user_is_shop_super_admin(user):
+        return True
+    created_by_id = getattr(product, "created_by_id", None)
+    user_id = getattr(user, "id", None)
+    if created_by_id and user_id and str(created_by_id) == str(user_id):
+        return True
+    if created_by_id is None and getattr(user, "role", None) == "manager":
+        return getattr(product, "organization_id", None) == getattr(user, "organization_id", None)
+    return False
+
+
 def user_is_protected_platform_admin(user) -> bool:
     """Super Admin Nivel 1 o 2: no modificables por administradores de menor nivel."""
     if not user:
@@ -157,6 +196,31 @@ class IsOrganizationAdmin(permissions.BasePermission):
             return True
 
         return request.user.is_staff and getattr(request.user, "role", None) == "admin"
+
+
+class CanManageShopProduct(permissions.BasePermission):
+    """
+    Lectura pública. Alta: manager/admin de contenido.
+    PUT/PATCH/DELETE: solo created_by o Super Admin L1/L2.
+    """
+
+    message = SHOP_PRODUCT_FORBIDDEN_MESSAGE
+
+    def has_permission(self, request, view):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        return user_can_manage_content(user) or user_is_shop_super_admin(user)
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        allowed = user_can_manage_shop_product(request.user, obj)
+        if not allowed:
+            self.message = SHOP_PRODUCT_FORBIDDEN_MESSAGE
+        return allowed
 
 
 class IsSuperAdminLevel1(permissions.BasePermission):

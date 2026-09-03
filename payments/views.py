@@ -7,7 +7,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 
-from core.permissions import IsSuperUser
+from core.permissions import IsSuperUser, user_admin_level, user_is_platform_elevated
 from notifications.services import notify_payment_status
 from payments.models import MercadoPagoConfig, MercadoPagoWebhookEvent, PaymentOrder, TransaccionFacturacion
 from payments.packages import CREDIT_PACKAGES, get_package
@@ -124,6 +124,35 @@ class PaymentViewSet(viewsets.ViewSet):
     def billing(self, request):
         txs = TransaccionFacturacion.objects.select_related("user")[:100]
         return Response(TransaccionFacturacionSerializer(txs, many=True).data)
+
+    @action(detail=False, methods=["get"], url_path="ledger")
+    def ledger(self, request):
+        """
+        Historial global de pagos (tienda / deportes / eventos).
+        GET /api/v1/payments/ledger/?category=tienda|deportes|eventos|all&export=csv
+        """
+        user = request.user
+        if not (
+            user_is_platform_elevated(user)
+            or user_admin_level(user) >= 1
+            or getattr(user, "is_staff", False)
+        ):
+            return Response(
+                {"detail": "No tienes permiso para ver el historial global."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from payments.ledger import build_payment_ledger, ledger_csv_response
+
+        rows = build_payment_ledger(
+            category=request.query_params.get("category") or "all",
+            search=request.query_params.get("search") or "",
+            date_from=request.query_params.get("date_from") or "",
+            date_to=request.query_params.get("date_to") or "",
+        )
+        if (request.query_params.get("export") or "").lower() in ("csv", "excel"):
+            return ledger_csv_response(rows)
+        return Response({"count": len(rows), "results": rows})
 
 
 @api_view(["POST", "GET"])

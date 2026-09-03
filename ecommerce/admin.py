@@ -5,6 +5,7 @@ from ecommerce.models import (
     Discount,
     Product,
     ProductDiscount,
+    ShopInvoice,
     ShopOrder,
     ShopOrderItem,
     StoreSettings,
@@ -52,9 +53,11 @@ class ProductAdmin(admin.ModelAdmin):
         "is_published",
         "is_featured",
         "organization",
+        "created_by",
     )
     list_filter = ("organization", "is_published", "is_featured", "category")
     search_fields = ("name", "sku", "slug")
+    raw_id_fields = ("created_by",)
     prepopulated_fields = {"slug": ("name",)}
 
 
@@ -102,11 +105,19 @@ class ShopOrderAdmin(admin.ModelAdmin):
         "id",
         "buyer",
         "status",
+        "delivery_status",
         "total_cop",
         "discount_code",
         "fulfilled",
         "created_at",
     )
-    list_filter = ("status", "fulfilled", "organization")
+    list_filter = ("status", "delivery_status", "fulfilled", "organization")
     search_fields = ("id", "buyer__email", "mp_payment_id")
     inlines = [ShopOrderItemInline]
+
+
+@admin.register(ShopInvoice)
+class ShopInvoiceAdmin(admin.ModelAdmin):
+    list_display = ("number", "buyer_email", "seller_name", "total_cop", "status", "created_at")
+    list_filter = ("status",)
+    search_fields = ("number", "buyer_email", "buyer_name")
