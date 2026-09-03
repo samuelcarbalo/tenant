@@ -24,9 +24,9 @@ CREDIT_PACKAGES = {
         "name": "Paquete Plata",
         "credits": 50,
         "price_cop": 45000,
-        "badge": "¡Ideal para 1 Torneo!",
+        "badge": "Paquete intermedio",
         "savings_cop": 5000,
-        "description": "50 créditos — avance hacia el Plan Administración Deportiva (200 créditos / 30 días).",
+        "description": "50 créditos para empleos, inmuebles o eventos. El Módulo Deportivo cuesta 200 créditos / 30 días.",
     },
     "oro": {
         "id": "oro",

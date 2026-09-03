@@ -25,7 +25,25 @@ def activate_sports_subscription(request):
     """
     POST /api/v1/subscriptions/activate-sports/
     Canjea 200 créditos por 30 días de CRUD ilimitado en el Servicio de Torneos.
+    El cliente puede enviar credits_amount=200; el cobro real siempre es la constante del servidor.
     """
+    raw_amount = request.data.get("credits_amount", request.data.get("credits"))
+    if raw_amount is not None:
+        try:
+            requested = int(raw_amount)
+        except (TypeError, ValueError):
+            requested = -1
+        if requested != CREDIT_COST_SPORTS_MODULE:
+            return Response(
+                {
+                    "detail": (
+                        f"El Servicio de Torneos cuesta {CREDIT_COST_SPORTS_MODULE} créditos. "
+                        "Actualiza la app e inténtalo de nuevo."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
     user = activate_or_extend_sports_module(request.user)
     return Response(
         {
