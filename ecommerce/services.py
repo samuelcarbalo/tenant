@@ -4,6 +4,7 @@ from django.core.cache import cache
 from django.db import transaction
 from django.db.models import F
 
+from ecommerce.checkout import compute_checkout_totals, resolve_shipping_cost
 from ecommerce.models import Discount, Product, ShopOrder, ShopOrderItem
 
 CACHE_TTL_CATEGORIES = 300
@@ -41,32 +42,22 @@ def resolve_discount(*, organization, code: str | None) -> Discount | None:
     return discount
 
 
-@transaction.atomic
-def create_shop_order(
-    *,
-    buyer,
-    organization,
-    items: list[dict],
-    discount_code: str | None = None,
-) -> ShopOrder:
-    """
-    Crea pedido + líneas. items = [{product_id, quantity}, ...]
-    Reserva stock de forma optimista (F expressions).
-    """
+def resolve_cart_lines(*, organization, items: list[dict], lock: bool = False):
+    """Valida productos y arma líneas de carrito. lock=True reserva con FOR UPDATE."""
     if not items:
         raise ValueError("El carrito está vacío.")
 
     product_ids = [str(i["product_id"]) for i in items]
-    # of=("self",) evita LEFT JOIN de FKs nulos (category) con FOR UPDATE en PostgreSQL.
-    products = {
-        str(p.id): p
-        for p in Product.objects.select_for_update(of=("self",)).filter(
-            id__in=product_ids,
-            organization=organization,
-            is_published=True,
-            is_active=True,
-        )
-    }
+    qs = Product.objects.filter(
+        id__in=product_ids,
+        organization=organization,
+        is_published=True,
+        is_active=True,
+    )
+    if lock:
+        # of=("self",) evita LEFT JOIN de FKs nulos (category) con FOR UPDATE en PostgreSQL.
+        qs = qs.select_for_update(of=("self",))
+    products = {str(p.id): p for p in qs}
     if len(products) != len(set(product_ids)):
         raise ValueError("Uno o más productos no están disponibles.")
 
@@ -82,17 +73,57 @@ def create_shop_order(
         line_total = (product.price_cop * qty).quantize(Decimal("1"))
         lines.append((product, qty, line_total))
         subtotal += line_total
+    return lines, subtotal
+
+
+def quote_shop_checkout(
+    *,
+    organization,
+    items: list[dict],
+    discount_code: str | None = None,
+) -> dict:
+    """Totales de checkout sin crear pedido ni preferencia MP."""
+    _lines, subtotal = resolve_cart_lines(organization=organization, items=items, lock=False)
+    discount = resolve_discount(organization=organization, code=discount_code)
+    discount_amount = discount.compute_discount(subtotal) if discount else Decimal("0")
+    return compute_checkout_totals(
+        subtotal=subtotal,
+        discount_amount=discount_amount,
+        shipping_cost=resolve_shipping_cost(organization),
+    )
+
+
+@transaction.atomic
+def create_shop_order(
+    *,
+    buyer,
+    organization,
+    items: list[dict],
+    discount_code: str | None = None,
+) -> ShopOrder:
+    """
+    Crea pedido + líneas. items = [{product_id, quantity}, ...]
+    Reserva stock de forma optimista (F expressions).
+    """
+    lines, subtotal = resolve_cart_lines(organization=organization, items=items, lock=True)
 
     discount = resolve_discount(organization=organization, code=discount_code)
     discount_amount = discount.compute_discount(subtotal) if discount else Decimal("0")
-    total = max(subtotal - discount_amount, Decimal("0"))
+    totals = compute_checkout_totals(
+        subtotal=subtotal,
+        discount_amount=discount_amount,
+        shipping_cost=resolve_shipping_cost(organization),
+    )
 
     order = ShopOrder.objects.create(
         organization=organization,
         buyer=buyer,
-        subtotal_cop=subtotal,
-        discount_cop=discount_amount,
-        total_cop=total,
+        subtotal_cop=totals["subtotal"],
+        discount_cop=totals["discount"],
+        shipping_cop=totals["shipping_cost"],
+        payment_fee_cop=totals["payment_fee"],
+        fee_percentage=totals["fee_percentage"],
+        total_cop=totals["total_amount"],
         discount=discount,
         discount_code=(discount.code if discount else ""),
     )

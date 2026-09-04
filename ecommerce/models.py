@@ -354,6 +354,9 @@ class ShopOrder(TimeStampedModel):
     )
     subtotal_cop = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
     discount_cop = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    shipping_cop = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    payment_fee_cop = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    fee_percentage = models.CharField(max_length=16, blank=True)
     total_cop = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
     discount = models.ForeignKey(
         Discount,
@@ -482,6 +485,12 @@ class StoreSettings(TimeStampedModel):
         related_name="store_settings",
     )
     store_logo = models.URLField(blank=True, max_length=500)
+    shipping_cost_cop = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0"),
+        help_text="Costo de envío trasladado al comprador en checkout (0 = no aplica).",
+    )
 
     class Meta:
         db_table = "ecommerce_store_settings"
