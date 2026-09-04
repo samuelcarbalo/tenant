@@ -128,6 +128,107 @@ class CatalogAPITests(EcommerceBaseTest):
         self.assertTrue(root_row["can_manage"])
         self.assertEqual(root_row["created_by"], str(self.manager.id))
 
+    def test_mine_filter_returns_own_including_unpublished(self):
+        other = User.objects.create_user(
+            email="other@test.com",
+            username="otherseller",
+            password="TestPass123!",
+            organization=self.org,
+            role="manager",
+        )
+        self.product.created_by = self.manager
+        self.product.save(update_fields=["created_by"])
+        Product.objects.create(
+            organization=self.org,
+            name="Oculto propio",
+            slug="oculto-propio",
+            price_cop=Decimal("1000"),
+            stock=1,
+            is_published=False,
+            is_active=False,
+            created_by=self.manager,
+        )
+        Product.objects.create(
+            organization=self.org,
+            name="De otro",
+            slug="de-otro",
+            price_cop=Decimal("2000"),
+            stock=1,
+            is_published=True,
+            created_by=other,
+        )
+
+        mine = self.manager_client.get(f"{API}/products/", {"mine": "true"})
+        self.assertEqual(mine.status_code, status.HTTP_200_OK, mine.data)
+        slugs = {p["slug"] for p in mine.data.get("results", mine.data)}
+        self.assertIn("camiseta-capisj", slugs)
+        self.assertIn("oculto-propio", slugs)
+        self.assertNotIn("de-otro", slugs)
+
+        created_by_me = self.manager_client.get(
+            f"{API}/products/", {"created_by_me": "true"}
+        )
+        self.assertEqual(created_by_me.status_code, status.HTTP_200_OK, created_by_me.data)
+        self.assertEqual(
+            {p["slug"] for p in created_by_me.data.get("results", created_by_me.data)},
+            slugs,
+        )
+
+        by_id = self.manager_client.get(
+            f"{API}/products/", {"created_by": str(self.manager.id)}
+        )
+        self.assertEqual(by_id.status_code, status.HTTP_200_OK, by_id.data)
+        self.assertEqual(
+            {p["slug"] for p in by_id.data.get("results", by_id.data)},
+            slugs,
+        )
+
+        manage = self.manager_client.get(f"{API}/products/", {"manage": "true"})
+        manage_slugs = {p["slug"] for p in manage.data.get("results", manage.data)}
+        self.assertEqual(slugs, manage_slugs)
+
+        public = self.anon.get(f"{API}/products/")
+        public_slugs = {p["slug"] for p in public.data.get("results", public.data)}
+        self.assertNotIn("oculto-propio", public_slugs)
+        self.assertIn("de-otro", public_slugs)
+
+        anon_mine = self.anon.get(f"{API}/products/", {"created_by_me": "true"})
+        self.assertEqual(anon_mine.status_code, status.HTTP_403_FORBIDDEN)
+
+        buyer_mine = self.buyer_client.get(f"{API}/products/", {"created_by_me": "true"})
+        self.assertEqual(buyer_mine.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_superuser_manage_all_lists_catalog(self):
+        self.product.created_by = self.manager
+        self.product.save(update_fields=["created_by"])
+        Product.objects.create(
+            organization=self.org,
+            name="Borrador",
+            slug="borrador-sa",
+            price_cop=Decimal("500"),
+            stock=1,
+            is_published=False,
+            created_by=self.manager,
+        )
+        superuser = User.objects.create_superuser(
+            email="shopall@test.com",
+            username="shopall",
+            password="TestPass123!",
+        )
+        root_client = auth_client(superuser)
+        mine = root_client.get(f"{API}/products/", {"mine": "true"})
+        mine_slugs = {p["slug"] for p in mine.data.get("results", mine.data)}
+        self.assertNotIn("camiseta-capisj", mine_slugs)
+
+        listing = root_client.get(f"{API}/products/", {"manage": "true", "all": "true"})
+        slugs = {p["slug"] for p in listing.data.get("results", listing.data)}
+        self.assertIn("camiseta-capisj", slugs)
+        self.assertIn("borrador-sa", slugs)
+
+        own_only = root_client.get(f"{API}/products/", {"created_by_me": "true"})
+        own_slugs = {p["slug"] for p in own_only.data.get("results", own_only.data)}
+        self.assertNotIn("camiseta-capisj", own_slugs)
+
     def test_list_categories(self):
         res = self.anon.get(f"{API}/categories/")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
@@ -201,7 +302,12 @@ class OrderServiceTests(EcommerceBaseTest):
         self.assertEqual(self.product.stock, 8)
         self.assertEqual(order.subtotal_cop, Decimal("90000"))
         self.assertEqual(order.discount_cop, Decimal("9000"))
-        self.assertEqual(order.total_cop, Decimal("81000"))
+        self.assertEqual(order.shipping_cop, Decimal("0"))
+        self.assertGreater(order.payment_fee_cop, Decimal("0"))
+        self.assertEqual(
+            order.total_cop,
+            order.subtotal_cop - order.discount_cop + order.shipping_cop + order.payment_fee_cop,
+        )
         self.assertEqual(order.items.count(), 1)
 
     def test_insufficient_stock(self):
@@ -270,8 +376,66 @@ class CheckoutAPITests(EcommerceBaseTest):
         self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
         self.assertEqual(res.data["preference_id"], "pref-shop-1")
         self.assertEqual(res.data["order"]["status"], "pending")
+        self.assertEqual(res.data["currency"], "COP")
+        self.assertEqual(res.data["subtotal"], 45000)
+        self.assertEqual(res.data["shipping_cost"], 0)
+        self.assertGreater(res.data["payment_fee"], 0)
+        self.assertEqual(
+            res.data["total_amount"],
+            res.data["subtotal"]
+            - res.data.get("discount", 0)
+            + res.data["shipping_cost"]
+            + res.data["payment_fee"],
+        )
         self.assertTrue(ShopOrder.objects.filter(buyer=self.buyer).exists())
         mock.create_preference_from_items.assert_called_once()
+        mp_items = mock.create_preference_from_items.call_args.kwargs["items"]
+        titles = [item["title"] for item in mp_items]
+        self.assertTrue(any("Pedido tienda" in title for title in titles))
+        self.assertIn("Comisión por Procesamiento de Pago", titles)
+        mp_total = sum(item["unit_price"] * item["quantity"] for item in mp_items)
+        self.assertEqual(mp_total, res.data["total_amount"])
+
+    @patch("ecommerce.views.MercadoPagoService")
+    def test_checkout_includes_shipping_item_when_configured(self, MockMP):
+        from ecommerce.models import StoreSettings
+
+        StoreSettings.objects.create(
+            organization=self.org,
+            shipping_cost_cop=Decimal("5000"),
+        )
+        mock = MockMP.return_value
+        mock.create_preference_from_items.return_value = {
+            "preference_id": "pref-shop-ship",
+            "init_point": "https://mp.example/init",
+            "sandbox_init_point": "https://mp.example/sandbox",
+        }
+        res = self.buyer_client.post(
+            f"{API}/orders/checkout/",
+            {"items": [{"product_id": str(self.product.id), "quantity": 1}]},
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED, res.data)
+        self.assertEqual(res.data["shipping_cost"], 5000)
+        titles = [
+            item["title"]
+            for item in mock.create_preference_from_items.call_args.kwargs["items"]
+        ]
+        self.assertIn("Costo de Envío", titles)
+        self.assertIn("Comisión por Procesamiento de Pago", titles)
+        self.assertIn("Camiseta CAPISJ", titles)
+
+    def test_quote_returns_breakdown_without_creating_order(self):
+        res = self.buyer_client.post(
+            f"{API}/orders/quote/",
+            {"items": [{"product_id": str(self.product.id), "quantity": 1}]},
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
+        self.assertEqual(res.data["subtotal"], 45000)
+        self.assertEqual(res.data["currency"], "COP")
+        self.assertGreater(res.data["payment_fee"], 0)
+        self.assertFalse(ShopOrder.objects.filter(buyer=self.buyer).exists())
 
     def test_checkout_requires_auth(self):
         res = self.anon.post(

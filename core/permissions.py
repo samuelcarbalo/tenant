@@ -47,21 +47,56 @@ SHOP_PRODUCT_FORBIDDEN_MESSAGE = (
 )
 
 
+def user_can_query_own_shop_products(user) -> bool:
+    """Vendedor/admin: puede listar su inventario con created_by_me."""
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    return user_can_manage_content(user) or user_is_shop_super_admin(user)
+
+
+# Roles con permiso de gestión de productos de tienda (case-insensitive).
+SHOP_PRODUCT_MANAGE_ROLES = frozenset(
+    {
+        "ADMIN",
+        "SUPER_ADMIN_L1",
+        "SUPER_ADMIN_L2",
+        "MANAGER",
+        "SUPER_ADMIN",
+    }
+)
+
+
+def user_has_shop_product_manage_role(user) -> bool:
+    """True si role/hierarchy_role está en ADMIN / SUPER_ADMIN_* / MANAGER."""
+    if not user:
+        return False
+    role = str(getattr(user, "role", "") or "").strip().upper()
+    hierarchy = str(getattr(user, "hierarchy_role", "") or "").strip().upper()
+    return role in SHOP_PRODUCT_MANAGE_ROLES or hierarchy in SHOP_PRODUCT_MANAGE_ROLES
+
+
 def user_can_manage_shop_product(user, product) -> bool:
     """
-    Escritura sobre un producto: dueño (created_by) o Super Admin L1/L2.
+    Escritura / can_manage sobre un producto:
+    - creador (created_by == user), o
+    - is_superuser, o
+    - role en ADMIN / SUPER_ADMIN_L1 / SUPER_ADMIN_L2 / MANAGER, o
+    - shop super-admin (admin_level / flags equivalentes).
+
     Productos legacy sin created_by: el manager de la misma organización
-    se trata como operador de la tienda.
+    sigue tratándose como operador de la tienda.
     """
     if not user or not getattr(user, "is_authenticated", False) or product is None:
         return False
-    if user_is_shop_super_admin(user):
+    if getattr(user, "is_superuser", False):
+        return True
+    if user_has_shop_product_manage_role(user) or user_is_shop_super_admin(user):
         return True
     created_by_id = getattr(product, "created_by_id", None)
     user_id = getattr(user, "id", None)
     if created_by_id and user_id and str(created_by_id) == str(user_id):
         return True
-    if created_by_id is None and getattr(user, "role", None) == "manager":
+    if created_by_id is None and str(getattr(user, "role", "") or "").lower() == "manager":
         return getattr(product, "organization_id", None) == getattr(user, "organization_id", None)
     return False
 
