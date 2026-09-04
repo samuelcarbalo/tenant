@@ -1,5 +1,9 @@
 from django.utils.deprecation import MiddlewareMixin
 from django.core.cache import cache
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class OrganizationMiddleware(MiddlewareMixin):
     """
@@ -17,24 +21,38 @@ class OrganizationMiddleware(MiddlewareMixin):
         # Buscar por slug (cabecera X-Tenant)
         if org_slug:
             cache_key = f'org_slug_{org_slug}'
-            organization = cache.get(cache_key)
+            try:
+                organization = cache.get(cache_key)
+            except Exception:
+                logger.exception("Cache get falló para org slug=%s", org_slug)
+                organization = None
             if not organization:
                 from organizations.models import Organization
                 try:
                     organization = Organization.objects.get(slug=org_slug, is_active=True)
-                    cache.set(cache_key, organization, 60 * 60 * 24)
+                    try:
+                        cache.set(cache_key, organization, 60 * 60 * 24)
+                    except Exception:
+                        logger.exception("Cache set falló para org slug=%s", org_slug)
                 except Organization.DoesNotExist:
                     pass
         
         # Buscar por ID (cabecera X-Organization-ID) si no se resolvió por slug
         elif org_id:
             cache_key = f'org_id_{org_id}'
-            organization = cache.get(cache_key)
+            try:
+                organization = cache.get(cache_key)
+            except Exception:
+                logger.exception("Cache get falló para org id=%s", org_id)
+                organization = None
             if not organization:
                 from organizations.models import Organization
                 try:
                     organization = Organization.objects.get(id=org_id, is_active=True)
-                    cache.set(cache_key, organization, 60 * 60 * 24)
+                    try:
+                        cache.set(cache_key, organization, 60 * 60 * 24)
+                    except Exception:
+                        logger.exception("Cache set falló para org id=%s", org_id)
                 except Organization.DoesNotExist:
                     pass
 

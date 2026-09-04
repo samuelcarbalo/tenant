@@ -40,9 +40,26 @@ _allowed_origins = _websocket_allowed_origins()
 if _allowed_origins:
     _ws_stack = OriginValidator(_ws_stack, _allowed_origins)
 
+
+async def _lifespan_app(scope, receive, send):
+    """
+    Daphne 4 / Uvicorn envían scope 'lifespan'. Django ASGI solo acepta 'http';
+    sin este handler ProtocolTypeRouter (o Django) falla y Daphne responde 500
+    'Exception inside application' incluso en /healthz.
+    """
+    while True:
+        message = await receive()
+        if message["type"] == "lifespan.startup":
+            await send({"type": "lifespan.startup.complete"})
+        elif message["type"] == "lifespan.shutdown":
+            await send({"type": "lifespan.shutdown.complete"})
+            return
+
+
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
         "websocket": _ws_stack,
+        "lifespan": _lifespan_app,
     }
 )

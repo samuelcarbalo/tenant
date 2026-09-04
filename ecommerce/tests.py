@@ -129,6 +129,14 @@ class CatalogAPITests(EcommerceBaseTest):
         self.assertEqual(root_row["created_by"], str(self.manager.id))
 
     def test_mine_filter_returns_own_including_unpublished(self):
+        admin = User.objects.create_user(
+            email="shopadmin@test.com",
+            username="shopadmin",
+            password="TestPass123!",
+            organization=self.org,
+            role="admin",
+        )
+        admin_client = auth_client(admin)
         other = User.objects.create_user(
             email="other@test.com",
             username="otherseller",
@@ -136,7 +144,7 @@ class CatalogAPITests(EcommerceBaseTest):
             organization=self.org,
             role="manager",
         )
-        self.product.created_by = self.manager
+        self.product.created_by = admin
         self.product.save(update_fields=["created_by"])
         Product.objects.create(
             organization=self.org,
@@ -146,7 +154,7 @@ class CatalogAPITests(EcommerceBaseTest):
             stock=1,
             is_published=False,
             is_active=False,
-            created_by=self.manager,
+            created_by=admin,
         )
         Product.objects.create(
             organization=self.org,
@@ -158,14 +166,14 @@ class CatalogAPITests(EcommerceBaseTest):
             created_by=other,
         )
 
-        mine = self.manager_client.get(f"{API}/products/", {"mine": "true"})
+        mine = admin_client.get(f"{API}/products/", {"mine": "true"})
         self.assertEqual(mine.status_code, status.HTTP_200_OK, mine.data)
         slugs = {p["slug"] for p in mine.data.get("results", mine.data)}
         self.assertIn("camiseta-capisj", slugs)
         self.assertIn("oculto-propio", slugs)
         self.assertNotIn("de-otro", slugs)
 
-        created_by_me = self.manager_client.get(
+        created_by_me = admin_client.get(
             f"{API}/products/", {"created_by_me": "true"}
         )
         self.assertEqual(created_by_me.status_code, status.HTTP_200_OK, created_by_me.data)
@@ -174,8 +182,8 @@ class CatalogAPITests(EcommerceBaseTest):
             slugs,
         )
 
-        by_id = self.manager_client.get(
-            f"{API}/products/", {"created_by": str(self.manager.id)}
+        by_id = admin_client.get(
+            f"{API}/products/", {"created_by": str(admin.id)}
         )
         self.assertEqual(by_id.status_code, status.HTTP_200_OK, by_id.data)
         self.assertEqual(
@@ -183,7 +191,7 @@ class CatalogAPITests(EcommerceBaseTest):
             slugs,
         )
 
-        manage = self.manager_client.get(f"{API}/products/", {"manage": "true"})
+        manage = admin_client.get(f"{API}/products/", {"manage": "true"})
         manage_slugs = {p["slug"] for p in manage.data.get("results", manage.data)}
         self.assertEqual(slugs, manage_slugs)
 
@@ -197,6 +205,12 @@ class CatalogAPITests(EcommerceBaseTest):
 
         buyer_mine = self.buyer_client.get(f"{API}/products/", {"created_by_me": "true"})
         self.assertEqual(buyer_mine.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Manager y comprador no tienen acceso al inventario admin-only.
+        manager_mine = self.manager_client.get(
+            f"{API}/products/", {"created_by_me": "true"}
+        )
+        self.assertEqual(manager_mine.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_superuser_manage_all_lists_catalog(self):
         self.product.created_by = self.manager

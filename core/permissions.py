@@ -48,10 +48,24 @@ SHOP_PRODUCT_FORBIDDEN_MESSAGE = (
 
 
 def user_can_query_own_shop_products(user) -> bool:
-    """Vendedor/admin: puede listar su inventario con created_by_me."""
+    """
+    Inventario «Mis productos creados» / created_by_me:
+    solo Admin o Super Admin (L1 / L2). Managers y compradores → False (403).
+    """
     if not user or not getattr(user, "is_authenticated", False):
         return False
-    return user_can_manage_content(user) or user_is_shop_super_admin(user)
+    if getattr(user, "is_superuser", False) or getattr(user, "is_admin", False):
+        return True
+    if user_is_shop_super_admin(user):
+        return True
+    if user_admin_level(user) >= 1:
+        return True
+    role = str(getattr(user, "role", "") or "").strip().upper()
+    hierarchy = str(getattr(user, "hierarchy_role", "") or "").strip().upper()
+    allowed = frozenset(
+        {"ADMIN", "SUPER_ADMIN_L1", "SUPER_ADMIN_L2", "SUPER_ADMIN"}
+    )
+    return role in allowed or hierarchy in allowed
 
 
 # Roles con permiso de gestión de productos de tienda (case-insensitive).
