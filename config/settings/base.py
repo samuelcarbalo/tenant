@@ -222,6 +222,8 @@ MP_COMMISSION_RATE = float(os.getenv("MP_COMMISSION_RATE", "0.0329"))
 MP_IVA_RATE = float(os.getenv("MP_IVA_RATE", "0.19"))
 MP_WITHDRAWAL_ALERT_DAYS = int(os.getenv("MP_WITHDRAWAL_ALERT_DAYS", "150"))
 MP_WITHDRAWAL_MAX_DAYS = int(os.getenv("MP_WITHDRAWAL_MAX_DAYS", "180"))
+# Envío de tienda (COP). 0 = no se cobra ni se muestra. Override por StoreSettings.shipping_cost_cop.
+SHOP_SHIPPING_COST_COP = os.getenv("SHOP_SHIPPING_COST_COP", "0")
 
 # Publicidad: desactiva que el dueño del torneo suba banners gratis
 TOURNAMENT_OWNER_BANNERS_ENABLED = (
