@@ -77,6 +77,56 @@ class AuthAPITests(BaseIntegrationTestCase):
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertEqual(res.data["email"], "user@test.com")
         self.assertIn("credits", res.data)
+        self.assertEqual(res.data["admin_level"], 0)
+        self.assertIsNone(res.data["hierarchy_role"])
+        self.assertFalse(res.data["is_super_admin_l1"])
+        self.assertFalse(res.data["is_super_admin_l2"])
+
+    def test_auth_me_and_login_expose_super_admin_hierarchy(self):
+        superuser = User.objects.create_superuser(
+            email="root@platform.com",
+            username="rootadmin",
+            password="TestPass123!",
+        )
+        client = APIClient()
+        login = client.post(
+            f"{API}/auth/login/",
+            {"email": "root@platform.com", "password": "TestPass123!"},
+            format="json",
+        )
+        self.assertEqual(login.status_code, status.HTTP_200_OK, login.data)
+        self.assertEqual(login.data["user"]["hierarchy_role"], "SUPER_ADMIN_L1")
+        self.assertEqual(login.data["user"]["admin_level"], 1)
+        self.assertTrue(login.data["user"]["is_superuser"])
+        self.assertTrue(login.data["user"]["is_super_admin_l1"])
+
+        client.force_authenticate(user=superuser)
+        me = client.get(f"{API}/auth/me/")
+        self.assertEqual(me.status_code, status.HTTP_200_OK, me.data)
+        self.assertEqual(me.data["hierarchy_role"], "SUPER_ADMIN_L1")
+        self.assertEqual(me.data["admin_level"], 1)
+        self.assertTrue(me.data["is_superuser"])
+        self.assertTrue(me.data["is_staff"])
+        self.assertTrue(me.data["is_super_admin_l1"])
+
+    def test_auth_me_delegated_admin_is_l2(self):
+        l2 = User.objects.create_user(
+            email="l2@test.com",
+            username="l2admin",
+            password="TestPass123!",
+            organization=self.org,
+            role="admin",
+            admin_level=2,
+            is_staff=True,
+        )
+        client = auth_client(l2)
+        me = client.get(f"{API}/auth/me/")
+        self.assertEqual(me.status_code, status.HTTP_200_OK, me.data)
+        self.assertEqual(me.data["role"], "admin")
+        self.assertEqual(me.data["hierarchy_role"], "SUPER_ADMIN_L2")
+        self.assertEqual(me.data["admin_level"], 2)
+        self.assertTrue(me.data["is_super_admin_l2"])
+        self.assertFalse(me.data["is_superuser"])
 
 
 class PaymentsAPITests(BaseIntegrationTestCase):

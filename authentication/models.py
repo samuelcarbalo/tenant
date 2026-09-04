@@ -171,7 +171,12 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
     @property
     def is_super_admin_l1(self) -> bool:
-        return int(getattr(self, "admin_level", 0) or 0) == self.ADMIN_LEVEL_ROOT
+        level = int(getattr(self, "admin_level", 0) or 0)
+        if level == self.ADMIN_LEVEL_ROOT:
+            return True
+        if level == self.ADMIN_LEVEL_DELEGATE:
+            return False
+        return bool(self.is_superuser)
 
     @property
     def is_super_admin_l2(self) -> bool:
@@ -179,10 +184,16 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
     @property
     def is_platform_admin(self) -> bool:
-        return int(getattr(self, "admin_level", 0) or 0) in (
-            self.ADMIN_LEVEL_ROOT,
-            self.ADMIN_LEVEL_DELEGATE,
-        )
+        return self.is_super_admin_l1 or self.is_super_admin_l2
+
+    @property
+    def hierarchy_role(self) -> str | None:
+        """Rol de jerarquía de plataforma (no confundir con role de organización)."""
+        if self.is_super_admin_l1:
+            return "SUPER_ADMIN_L1"
+        if self.is_super_admin_l2:
+            return "SUPER_ADMIN_L2"
+        return None
 
     @property
     def has_unlimited_credits(self) -> bool:

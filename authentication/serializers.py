@@ -11,6 +11,65 @@ from profiles.models import Profile
 User = get_user_model()
 
 
+def auth_user_payload(user) -> dict:
+    """
+    Contrato de sesión para login / me / verify.
+    `role` es el rol de organización (user|manager|admin).
+    `hierarchy_role` es Super Admin L1/L2 para el frontend de tienda.
+    """
+    level = int(getattr(user, "admin_level", 0) or 0)
+    hierarchy = getattr(user, "hierarchy_role", None)
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "username": user.username,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "full_name": user.full_name,
+        "role": user.role,
+        "hierarchy_role": hierarchy,
+        "admin_level": level,
+        "is_superuser": bool(user.is_superuser),
+        "is_staff": bool(user.is_staff),
+        "is_super_admin_l1": bool(hierarchy == "SUPER_ADMIN_L1"),
+        "is_super_admin_l2": bool(hierarchy == "SUPER_ADMIN_L2"),
+        "company_name": user.company_name if user.company_name else None,
+        "user_type": user.user_type,
+        "credits": user.credits,
+        "is_unlimited_credits": bool(user.is_unlimited_credits),
+        "sports_module_active": bool(user.sports_module_active),
+        "sports_module_expires_at": user.sports_module_expires_at,
+        "organization": {
+            "id": str(user.organization.id),
+            "name": user.organization.name,
+            "slug": user.organization.slug,
+        }
+        if user.organization
+        else None,
+        "organization_name": user.organization.name if user.organization else None,
+    }
+
+
+def _set_token_claims(token, user):
+    token["email"] = user.email
+    token["username"] = user.username
+    token["role"] = user.role
+    token["admin_level"] = int(getattr(user, "admin_level", 0) or 0)
+    token["is_superuser"] = bool(user.is_superuser)
+    token["hierarchy_role"] = getattr(user, "hierarchy_role", None) or ""
+    if user.organization_id:
+        token["org_id"] = str(user.organization_id)
+        token["organization_id"] = str(user.organization_id)
+
+
+def issue_tokens_for_user(user):
+    refresh = RefreshToken.for_user(user)
+    _set_token_claims(refresh, user)
+    access = refresh.access_token
+    _set_token_claims(access, user)
+    return refresh, access
+
+
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
     Serializer personalizado para obtener tokens JWT con información adicional como la organizacion.
@@ -28,45 +87,13 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         data["refresh"] = str(refresh)
         data["access"] = str(refresh.access_token)
 
-        data["user"] = {
-            "id": str(self.user.id),
-            "email": self.user.email,
-            "username": self.user.username,
-            "full_name": self.user.full_name,
-            "role": self.user.role,
-            "admin_level": int(getattr(self.user, "admin_level", 0) or 0),
-            "is_superuser": self.user.is_superuser,
-            "is_staff": self.user.is_staff,
-            # AHORA: string si es empresa, null si no
-            "company_name": self.user.company_name if self.user.company_name else False,
-            "user_type": self.user.user_type,  # opcional
-            "credits": self.user.credits,
-            "organization": {
-                "id": str(self.user.organization.id)
-                if self.user.organization
-                else None,
-                "name": self.user.organization.name if self.user.organization else None,
-                "slug": self.user.organization.slug if self.user.organization else None,
-            },
-        }
+        data["user"] = auth_user_payload(self.user)
         return data
 
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
-
-        # claims personalizados
-        token["email"] = user.email
-        token["username"] = user.username
-
-        # claims de organización
-        if user.organization:
-            token["org_id"] = str(user.organization_id)
-
-        if user.is_superuser:
-            token["is_superuser"] = True
-        token["admin_level"] = int(getattr(user, "admin_level", 0) or 0)
-
+        _set_token_claims(token, user)
         return token
 
 
@@ -218,6 +245,9 @@ class UserSerializer(serializers.ModelSerializer):
     organization_name = serializers.CharField(
         source="organization.name", read_only=True
     )
+    hierarchy_role = serializers.SerializerMethodField()
+    is_super_admin_l1 = serializers.SerializerMethodField()
+    is_super_admin_l2 = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -230,12 +260,15 @@ class UserSerializer(serializers.ModelSerializer):
             "phone",
             "full_name",
             "role",
+            "hierarchy_role",
             "admin_level",
             "organization",
             "organization_name",
             "is_active",
             "is_superuser",
             "is_staff",
+            "is_super_admin_l1",
+            "is_super_admin_l2",
             "is_unlimited_credits",
             "email_verified",
             "date_joined",
@@ -254,15 +287,32 @@ class UserSerializer(serializers.ModelSerializer):
             "is_superuser",
             "is_staff",
             "admin_level",
+            "hierarchy_role",
+            "is_super_admin_l1",
+            "is_super_admin_l2",
             "sports_module_active",
             "sports_module_expires_at",
         ]
+
+    def get_hierarchy_role(self, obj):
+        return getattr(obj, "hierarchy_role", None)
+
+    def get_is_super_admin_l1(self, obj):
+        return bool(getattr(obj, "hierarchy_role", None) == "SUPER_ADMIN_L1")
+
+    def get_is_super_admin_l2(self, obj):
+        return bool(getattr(obj, "hierarchy_role", None) == "SUPER_ADMIN_L2")
 
     def to_representation(self, instance):
         from authentication.sports_subscription import sync_sports_module_status
 
         sync_sports_module_status(instance)
-        return super().to_representation(instance)
+        data = super().to_representation(instance)
+        data["id"] = str(instance.id)
+        data["admin_level"] = int(getattr(instance, "admin_level", 0) or 0)
+        data["is_superuser"] = bool(instance.is_superuser)
+        data["is_staff"] = bool(instance.is_staff)
+        return data
 
 
 class PasswordChangeSerializer(serializers.Serializer):  # Cambia a Serializer
