@@ -57,16 +57,15 @@ def create_shop_order(
         raise ValueError("El carrito está vacío.")
 
     product_ids = [str(i["product_id"]) for i in items]
+    # of=("self",) evita LEFT JOIN de FKs nulos (category) con FOR UPDATE en PostgreSQL.
     products = {
         str(p.id): p
-        for p in Product.objects.select_for_update()
-        .filter(
+        for p in Product.objects.select_for_update(of=("self",)).filter(
             id__in=product_ids,
             organization=organization,
             is_published=True,
             is_active=True,
         )
-        .select_related("category")
     }
     if len(products) != len(set(product_ids)):
         raise ValueError("Uno o más productos no están disponibles.")
