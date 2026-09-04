@@ -19,6 +19,8 @@ from .serializers import (
     UserSerializer,
     PasswordChangeSerializer,
     PasswordResetConfirmSerializer,
+    auth_user_payload,
+    issue_tokens_for_user,
 )
 from .models import LoginAttempt
 from .emails import send_password_reset_email
@@ -52,34 +54,13 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         serializer.is_valid(raise_exception=True)
 
         user = serializer.validated_data["user"]
-
-        # Generar tokens manualmente
-        refresh = RefreshToken.for_user(user)
+        refresh, access = issue_tokens_for_user(user)
 
         return Response(
             {
                 "refresh": str(refresh),
-                "access": str(refresh.access_token),
-                "user": {
-                    "id": str(user.id),
-                    "email": user.email,
-                    "username": user.username,
-                    "company_name": user.company_name,
-                    "role": user.role,
-                    "is_superuser": user.is_superuser,
-                    "is_staff": user.is_staff,
-                    "credits": user.credits,
-                    "is_unlimited_credits": user.is_unlimited_credits,
-                    "sports_module_active": user.sports_module_active,
-                    "sports_module_expires_at": user.sports_module_expires_at,
-                    "organization": {
-                        "id": str(user.organization.id),
-                        "name": user.organization.name,
-                        "slug": user.organization.slug,
-                    }
-                    if user.organization
-                    else None,
-                },
+                "access": str(access),
+                "user": auth_user_payload(user),
             }
         )
 
@@ -96,33 +77,16 @@ class RegisterView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        refresh = RefreshToken.for_user(user)
+        refresh, access = issue_tokens_for_user(user)
         return Response(
             {
                 "success": True,
                 "message": "Usuario registrado exitosamente.",
                 "tokens": {
                     "refresh": str(refresh),
-                    "access": str(refresh.access_token),
+                    "access": str(access),
                 },
-                "user": {
-                    "id": str(user.id),
-                    "email": user.email,
-                    "username": user.username,
-                    "full_name": user.full_name,
-                    "company_name": user.company_name,
-                    "role": user.role,
-                    "credits": user.credits,
-                    "sports_module_active": user.sports_module_active,
-                    "sports_module_expires_at": user.sports_module_expires_at,
-                    "organization": {
-                        "id": str(user.organization.id),
-                        "name": user.organization.name,
-                        "slug": user.organization.slug,
-                    }
-                    if user.organization
-                    else None,
-                },
+                "user": auth_user_payload(user),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -213,23 +177,7 @@ def verify_token(request):
     return Response(
         {
             "valid": True,
-            "user": {
-                "id": str(user.id),
-                "email": user.email,
-                "role": user.role,
-                "admin_level": int(getattr(user, "admin_level", 0) or 0),
-                "is_superuser": user.is_superuser,
-                "is_staff": user.is_staff,
-                "credits": user.credits,
-                "is_unlimited_credits": user.is_unlimited_credits,
-                "sports_module_active": user.sports_module_active,
-                "sports_module_expires_at": user.sports_module_expires_at,
-                "user_type": user.user_type,
-                "organization": {
-                    "id": str(user.organization.id) if user.organization else None,
-                    "name": user.organization.name if user.organization else None,
-                },
-            },
+            "user": auth_user_payload(user),
         }
     )
 

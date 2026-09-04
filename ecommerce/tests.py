@@ -104,6 +104,29 @@ class CatalogAPITests(EcommerceBaseTest):
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertEqual(res.data["name"], "Camiseta CAPISJ")
         self.assertIn("description", res.data)
+        self.assertFalse(res.data["can_manage"])
+
+    def test_product_list_can_manage_for_admin_and_owner(self):
+        self.product.created_by = self.manager
+        self.product.save(update_fields=["created_by"])
+        owner_list = self.manager_client.get(f"{API}/products/")
+        owner_row = owner_list.data.get("results", owner_list.data)[0]
+        self.assertTrue(owner_row["can_manage"])
+
+        buyer_list = self.buyer_client.get(f"{API}/products/")
+        buyer_row = buyer_list.data.get("results", buyer_list.data)[0]
+        self.assertFalse(buyer_row["can_manage"])
+
+        superuser = User.objects.create_superuser(
+            email="shoproot@test.com",
+            username="shoproot",
+            password="TestPass123!",
+        )
+        root_client = auth_client(superuser)
+        root_list = root_client.get(f"{API}/products/")
+        root_row = root_list.data.get("results", root_list.data)[0]
+        self.assertTrue(root_row["can_manage"])
+        self.assertEqual(root_row["created_by"], str(self.manager.id))
 
     def test_list_categories(self):
         res = self.anon.get(f"{API}/categories/")

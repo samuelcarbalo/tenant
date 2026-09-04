@@ -87,7 +87,7 @@ class ProductListSerializer(serializers.ModelSerializer):
     def get_can_manage(self, obj):
         request = self.context.get("request")
         user = getattr(request, "user", None)
-        return user_can_manage_shop_product(user, obj)
+        return bool(user_can_manage_shop_product(user, obj))
 
     def get_category_name(self, obj):
         category = getattr(obj, "category", None)

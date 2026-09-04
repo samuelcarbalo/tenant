@@ -30,11 +30,14 @@ def user_is_super_admin_l2(user) -> bool:
 
 
 def user_is_shop_super_admin(user) -> bool:
-    """Super Admin Nivel 1 o Nivel 2: moderación global de la tienda."""
+    """Super Admin Nivel 1 o Nivel 2, o Administrador de la organización."""
     if not user or not getattr(user, "is_authenticated", False):
         return False
     role = str(getattr(user, "role", "") or "")
-    if role in ("SUPER_ADMIN_L1", "SUPER_ADMIN_L2", "SUPER_ADMIN", "super_admin"):
+    hierarchy = str(getattr(user, "hierarchy_role", "") or "")
+    if role in ("SUPER_ADMIN_L1", "SUPER_ADMIN_L2", "SUPER_ADMIN", "super_admin", "admin"):
+        return True
+    if hierarchy in ("SUPER_ADMIN_L1", "SUPER_ADMIN_L2", "SUPER_ADMIN"):
         return True
     return user_is_super_admin_l1(user) or user_is_super_admin_l2(user)
 
