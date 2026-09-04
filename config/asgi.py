@@ -40,9 +40,12 @@ _allowed_origins = _websocket_allowed_origins()
 if _allowed_origins:
     _ws_stack = OriginValidator(_ws_stack, _allowed_origins)
 
+# Daphne 4 / Uvicorn envían scope type "lifespan". Sin handler, ProtocolTypeRouter
+# lanza ValueError y Daphne responde 500 "Exception inside application" en todo HTTP.
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
         "websocket": _ws_stack,
+        "lifespan": django_asgi_app,
     }
 )
