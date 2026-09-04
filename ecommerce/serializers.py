@@ -55,6 +55,7 @@ class ProductListSerializer(serializers.ModelSerializer):
     subcategory_slug = serializers.SerializerMethodField()
     active_discount = serializers.SerializerMethodField()
     created_by = serializers.UUIDField(source="created_by_id", read_only=True, allow_null=True)
+    created_by_email = serializers.SerializerMethodField()
     can_manage = serializers.SerializerMethodField()
 
     class Meta:
@@ -80,14 +81,27 @@ class ProductListSerializer(serializers.ModelSerializer):
             "subcategory_slug",
             "active_discount",
             "created_by",
+            "created_by_email",
             "can_manage",
             "created_at",
         ]
 
     def get_can_manage(self, obj):
+        """
+        Flag por usuario autenticado (request llega vía DRF get_serializer_context).
+        True si: creador, is_superuser, o role ADMIN/SUPER_ADMIN_*/MANAGER.
+        """
         request = self.context.get("request")
+        if request is None:
+            return False
         user = getattr(request, "user", None)
+        if not user or not getattr(user, "is_authenticated", False):
+            return False
         return bool(user_can_manage_shop_product(user, obj))
+
+    def get_created_by_email(self, obj):
+        creator = getattr(obj, "created_by", None)
+        return getattr(creator, "email", None) if creator is not None else None
 
     def get_category_name(self, obj):
         category = getattr(obj, "category", None)

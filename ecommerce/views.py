@@ -8,7 +8,7 @@ from django.db.models import Avg, Count, Prefetch, Q, Sum
 from django_filters import rest_framework as filters
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 
@@ -32,17 +32,24 @@ from ecommerce.serializers import (
     ShopOrderSerializer,
     SubCategorySerializer,
 )
+from ecommerce.checkout import (
+    build_mp_preference_items,
+    checkout_payload_from_order,
+    checkout_public_payload,
+)
 from ecommerce.services import (
     categories_cache_key,
     create_shop_order,
     invalidate_catalog_cache,
     product_detail_cache_key,
+    quote_shop_checkout,
 )
 from core.permissions import (
     CanManageShopProduct,
     resolve_request_organization,
     user_can_manage_content,
     user_can_manage_shop_product,
+    user_can_query_own_shop_products,
     user_is_platform_elevated,
     user_is_shop_super_admin,
 )
@@ -52,6 +59,15 @@ from payments.services.mercadopago_service import MercadoPagoService
 logger = logging.getLogger(__name__)
 
 _MISSING_TABLE_MSG = "Las tablas de e-commerce no existen o no se han migrado."
+
+
+def _query_flag(request, *names: str) -> bool:
+    params = getattr(request, "query_params", None) or {}
+    for name in names:
+        raw = str(params.get(name) or "").strip().lower()
+        if raw in ("1", "true", "yes", "on"):
+            return True
+    return False
 
 
 def _catalog_error(exc):
@@ -266,6 +282,10 @@ SHOP_PRODUCT_FORBIDDEN = {
     "detail": "No tienes permisos para editar o eliminar este producto.",
 }
 
+SHOP_INVENTORY_FORBIDDEN = (
+    "No tienes permisos de vendedor o administrador para consultar productos creados."
+)
+
 
 class ProductViewSet(viewsets.ModelViewSet):
     permission_classes = [CanManageShopProduct]
@@ -290,18 +310,46 @@ class ProductViewSet(viewsets.ModelViewSet):
             org = _request_org(self.request)
             if org:
                 qs = qs.filter(organization=org)
-            if self.action in ("list", "retrieve"):
-                user = self.request.user
-                if user_is_shop_super_admin(user):
-                    return qs
-                is_manager = (
-                    getattr(user, "is_authenticated", False)
-                    and getattr(user, "role", None) == "manager"
-                    and getattr(user, "organization_id", None) == getattr(org, "id", None)
-                )
-                if not is_manager:
-                    qs = qs.filter(is_published=True, is_active=True)
+            if self.action not in ("list", "retrieve"):
+                return qs
+
+            user = self.request.user
+            mine = _query_flag(self.request, "mine", "my_products", "created_by_me")
+            manage = _query_flag(self.request, "manage")
+            see_all = _query_flag(self.request, "all")
+            created_by = str(self.request.query_params.get("created_by") or "").strip()
+
+            # Inventario: incluye no publicados. El catálogo público no usa estos flags.
+            if mine or manage or created_by:
+                if not user_can_query_own_shop_products(user):
+                    raise PermissionDenied(SHOP_INVENTORY_FORBIDDEN)
+                is_sa = user_is_shop_super_admin(user)
+                if created_by:
+                    from uuid import UUID
+
+                    try:
+                        creator_id = UUID(created_by)
+                    except (ValueError, TypeError, AttributeError):
+                        return qs.none()
+                    if str(getattr(user, "id", "")) != str(creator_id) and not is_sa:
+                        raise PermissionDenied(SHOP_INVENTORY_FORBIDDEN)
+                    return qs.filter(created_by_id=creator_id)
+                if mine or not (is_sa and see_all):
+                    qs = qs.filter(created_by_id=user.id)
+                return qs
+
+            if user_is_shop_super_admin(user):
+                return qs
+            is_manager = (
+                getattr(user, "is_authenticated", False)
+                and getattr(user, "role", None) == "manager"
+                and getattr(user, "organization_id", None) == getattr(org, "id", None)
+            )
+            if not is_manager:
+                qs = qs.filter(is_published=True, is_active=True)
             return qs
+        except (Http404, APIException):
+            raise
         except Exception as e:
             logger.error("ProductViewSet.get_queryset failed: %s", e, exc_info=True)
             raise
@@ -592,6 +640,29 @@ class ShopOrderViewSet(viewsets.ReadOnlyModelViewSet):
         order.save(update_fields=["delivery_status", "updated_at"])
         return Response(ShopOrderSerializer(order).data)
 
+    @action(detail=False, methods=["post"], url_path="quote")
+    def quote(self, request):
+        serializer = CheckoutSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        org = getattr(request, "current_organization", None) or request.user.organization
+        if not org:
+            return Response(
+                {"detail": "Organización no resuelta."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            totals = quote_shop_checkout(
+                organization=org,
+                items=serializer.validated_data["items"],
+                discount_code=serializer.validated_data.get("discount_code") or None,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(checkout_public_payload(totals))
+
     @action(detail=False, methods=["post"], url_path="checkout")
     def checkout(self, request):
         serializer = CheckoutSerializer(data=request.data)
@@ -616,31 +687,7 @@ class ShopOrderViewSet(viewsets.ReadOnlyModelViewSet):
 
         try:
             mp = MercadoPagoService()
-            items_payload = [
-                {
-                    "id": str(item.product_id or item.id),
-                    "title": item.product_name[:120],
-                    "description": item.product_sku or item.product_name,
-                    "quantity": item.quantity,
-                    "currency_id": "COP",
-                    "unit_price": float(item.unit_price_cop),
-                }
-                for item in order.items.all()
-            ]
-            # Si hay descuento, ajustar con ítem negativo no soportado en MP fácilmente:
-            # enviamos un único ítem consolidado con el total.
-            if order.discount_cop and order.discount_cop > 0:
-                items_payload = [
-                    {
-                        "id": str(order.id),
-                        "title": f"Pedido tienda ({len(items_payload)} ítems)",
-                        "description": f"Descuento {order.discount_code or ''}".strip(),
-                        "quantity": 1,
-                        "currency_id": "COP",
-                        "unit_price": float(order.total_cop),
-                    }
-                ]
-
+            items_payload = build_mp_preference_items(order)
             pref = mp.create_preference_from_items(
                 items=items_payload,
                 user_email=request.user.email,
@@ -652,6 +699,10 @@ class ShopOrderViewSet(viewsets.ReadOnlyModelViewSet):
                     "order_type": "ecommerce",
                     "shop_order_id": str(order.id),
                     "discount_code": order.discount_code,
+                    "subtotal": str(order.subtotal_cop),
+                    "shipping_cost": str(order.shipping_cop),
+                    "payment_fee": str(order.payment_fee_cop),
+                    "total_amount": str(order.total_cop),
                 },
             )
         except Exception as exc:
@@ -663,16 +714,17 @@ class ShopOrderViewSet(viewsets.ReadOnlyModelViewSet):
         order.mp_preference_id = pref.get("preference_id") or ""
         order.save(update_fields=["mp_preference_id", "updated_at"])
 
-        return Response(
+        payload = checkout_payload_from_order(order)
+        payload.update(
             {
                 "order": ShopOrderSerializer(order).data,
                 "preference_id": pref.get("preference_id"),
                 "init_point": pref.get("init_point"),
                 "sandbox_init_point": pref.get("sandbox_init_point"),
                 "is_production": pref.get("is_production", mp.is_production),
-            },
-            status=status.HTTP_201_CREATED,
+            }
         )
+        return Response(payload, status=status.HTTP_201_CREATED)
 
 
 # ShopOrderItem imported at top
