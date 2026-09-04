@@ -427,6 +427,7 @@ def import_products(*, rows: list[dict], organization, user) -> ImportResult:
                 else:
                     Product.objects.create(
                         organization=organization,
+                        created_by=user,
                         slug=_unique_product_slug(organization, name),
                         **payload,
                     )
