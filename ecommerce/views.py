@@ -9,9 +9,19 @@ from django_filters import rest_framework as filters
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException, PermissionDenied
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 
+from ecommerce.batch_import import (
+    MAX_BATCH_ROWS,
+    MAX_UPLOAD_BYTES,
+    PRODUCT_HEADERS,
+    assert_product_headers,
+    import_products_batch,
+    read_upload_rows,
+    template_http_response,
+)
 from ecommerce.models import (
     Category,
     Discount,
@@ -480,6 +490,131 @@ class ProductViewSet(viewsets.ModelViewSet):
         product.save(update_fields=update_fields)
         invalidate_catalog_cache(str(product.organization_id), product.slug)
         return Response(ProductDetailSerializer(product, context={"request": request}).data)
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="import-template",
+        permission_classes=[IsAuthenticated],
+    )
+    def import_template(self, request):
+        """Descarga plantilla CSV/XLSX de productos (solo admin inventario)."""
+        if not user_can_query_own_shop_products(request.user):
+            raise PermissionDenied(SHOP_INVENTORY_FORBIDDEN)
+        fmt = str(request.query_params.get("format") or "xlsx").lower()
+        response = template_http_response(fmt=fmt)
+        response["X-Batch-Max-Rows"] = str(MAX_BATCH_ROWS)
+        response["X-Batch-Max-Bytes"] = str(MAX_UPLOAD_BYTES)
+        response["X-Template-Headers"] = ",".join(PRODUCT_HEADERS)
+        return response
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="import-batch",
+        permission_classes=[IsAuthenticated],
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def import_batch(self, request):
+        """
+        Carga masiva CSV/XLSX. Límites Free: 2 MB / 200 filas.
+        Asocia productos a organization (X-Tenant) y created_by=request.user.
+        """
+        if not user_can_query_own_shop_products(request.user):
+            raise PermissionDenied(SHOP_INVENTORY_FORBIDDEN)
+
+        upload = request.FILES.get("file") or request.FILES.get("excel")
+        if not upload:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Adjunte el archivo en el campo 'file' (.csv o .xlsx).",
+                    "max_rows": MAX_BATCH_ROWS,
+                    "max_bytes": MAX_UPLOAD_BYTES,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        size = int(getattr(upload, "size", 0) or 0)
+        if size > MAX_UPLOAD_BYTES:
+            return Response(
+                {
+                    "status": "error",
+                    "message": (
+                        f"El archivo supera el máximo de "
+                        f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB del plan actual."
+                    ),
+                    "max_bytes": MAX_UPLOAD_BYTES,
+                    "max_rows": MAX_BATCH_ROWS,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        org = resolve_request_organization(request)
+        if org is None:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "No se pudo resolver la organización (cabecera X-Tenant).",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            headers, rows = read_upload_rows(upload)
+            assert_product_headers(headers)
+            if not rows:
+                return Response(
+                    {
+                        "status": "error",
+                        "message": "El archivo no contiene filas de productos.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            result = import_products_batch(
+                rows=rows, organization=org, user=request.user
+            )
+        except ValueError as exc:
+            return Response(
+                {
+                    "status": "error",
+                    "message": str(exc),
+                    "max_rows": MAX_BATCH_ROWS,
+                    "max_bytes": MAX_UPLOAD_BYTES,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("import-batch falló")
+            return Response(
+                {
+                    "status": "error",
+                    "message": f"No se pudo procesar el archivo: {exc}",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            invalidate_catalog_cache(str(org.id))
+        except Exception:
+            logger.exception("No se pudo invalidar caché tras import-batch")
+
+        payload = {
+            "status": "ok" if not result.errors else "partial",
+            "success": True,
+            "message": "Importación completada.",
+            "organization": getattr(org, "slug", None),
+            "max_rows": MAX_BATCH_ROWS,
+            "max_bytes": MAX_UPLOAD_BYTES,
+            "headers": PRODUCT_HEADERS,
+            **result.as_dict(),
+        }
+        if result.errors and result.created + result.updated == 0:
+            payload["status"] = "error"
+            payload["success"] = False
+            payload["message"] = "Se encontraron errores al procesar el archivo."
+            return Response(payload, status=status.HTTP_400_BAD_REQUEST)
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class DiscountViewSet(viewsets.ModelViewSet):

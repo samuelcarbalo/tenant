@@ -1,11 +1,11 @@
 """Importación masiva Excel (.xlsx) para el panel de administración."""
 
-from .headers import IMPORT_MODULES, TEMPLATE_HEADERS
-from .views import ImportExcelView, ImportTemplateView
+__all__ = ("ImportExcelView", "ImportTemplateView", "ImportModulesListView")
 
-__all__ = [
-    "IMPORT_MODULES",
-    "TEMPLATE_HEADERS",
-    "ImportExcelView",
-    "ImportTemplateView",
-]
+
+def __getattr__(name: str):
+    if name in __all__:
+        from . import views
+
+        return getattr(views, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
