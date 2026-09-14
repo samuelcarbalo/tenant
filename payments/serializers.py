@@ -30,6 +30,11 @@ class PreferenceResponseSerializer(serializers.Serializer):
     init_point = serializers.CharField(required=False, allow_null=True)
     sandbox_init_point = serializers.CharField(required=False, allow_null=True)
     order_id = serializers.UUIDField()
+    base_amount = serializers.IntegerField()
+    fee_amount = serializers.IntegerField()
+    total_amount = serializers.IntegerField()
+    fee_percentage = serializers.CharField(required=False)
+    currency = serializers.CharField(required=False)
 
 
 class PaymentOrderSerializer(serializers.ModelSerializer):

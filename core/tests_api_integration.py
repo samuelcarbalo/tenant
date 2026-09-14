@@ -160,7 +160,22 @@ class PaymentsAPITests(BaseIntegrationTestCase):
         )
         self.assertEqual(res.status_code, status.HTTP_200_OK, res.data)
         self.assertEqual(res.data["preference_id"], "pref-test-123")
-        self.assertTrue(PaymentOrder.objects.filter(user=self.manager, package_id="basico").exists())
+        self.assertEqual(res.data["base_amount"], 20000)
+        self.assertGreater(res.data["fee_amount"], 0)
+        self.assertEqual(
+            res.data["total_amount"],
+            res.data["base_amount"] + res.data["fee_amount"],
+        )
+        order = PaymentOrder.objects.get(user=self.manager, package_id="basico")
+        self.assertEqual(order.amount_cop, res.data["total_amount"])
+        self.assertEqual(
+            mock_instance.create_preference.call_args.kwargs["base_amount"],
+            20000,
+        )
+        self.assertEqual(
+            mock_instance.create_preference.call_args.kwargs["fee_amount"],
+            res.data["fee_amount"],
+        )
 
     def test_webhook_approves_and_credits(self):
         order = PaymentOrder.objects.create(

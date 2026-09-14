@@ -51,13 +51,19 @@ def compute_checkout_totals(
 
 
 def checkout_public_payload(totals: dict) -> dict:
+    subtotal = cop_int(totals["subtotal"])
+    discount = cop_int(totals["discount"])
+    payment_fee = cop_int(totals["payment_fee"])
+    shipping_cost = cop_int(totals["shipping_cost"])
     return {
-        "subtotal": cop_int(totals["subtotal"]),
-        "discount": cop_int(totals["discount"]),
-        "payment_fee": cop_int(totals["payment_fee"]),
+        "subtotal": subtotal,
+        "discount": discount,
+        "payment_fee": payment_fee,
         "fee_percentage": totals["fee_percentage"],
-        "shipping_cost": cop_int(totals["shipping_cost"]),
+        "shipping_cost": shipping_cost,
         "total_amount": cop_int(totals["total_amount"]),
+        "base_amount": max(subtotal - discount, 0),
+        "fee_amount": payment_fee,
         "currency": totals.get("currency") or "COP",
     }
 

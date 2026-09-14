@@ -19,6 +19,7 @@ from payments.serializers import (
     PurchaseHistorySerializer,
     TransaccionFacturacionSerializer,
 )
+from payments.services.billing import public_processing_breakdown
 from payments.services.mercadopago_service import MercadoPagoService
 from payments.services.mp_config import (
     EMPTY_MP_ADMIN_CONFIG,
@@ -57,12 +58,18 @@ class PaymentViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         package_id = serializer.validated_data["package_id"]
         package = get_package(package_id)
+        if not package:
+            return Response(
+                {"detail": "Paquete no encontrado."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        breakdown = public_processing_breakdown(package["price_cop"])
 
         order = PaymentOrder.objects.create(
             user=request.user,
             package_id=package_id,
             credits_amount=package["credits"],
-            amount_cop=package["price_cop"],
+            amount_cop=breakdown["total_amount"],
         )
 
         try:
@@ -72,6 +79,8 @@ class PaymentViewSet(viewsets.ViewSet):
                 user_email=request.user.email,
                 user_id=str(request.user.id),
                 order_id=str(order.id),
+                base_amount=breakdown["base_amount"],
+                fee_amount=breakdown["fee_amount"],
             )
         except Exception as exc:
             order.status = "cancelled"
@@ -92,6 +101,11 @@ class PaymentViewSet(viewsets.ViewSet):
                 "sandbox_init_point": pref.get("sandbox_init_point"),
                 "is_production": pref.get("is_production", mp.is_production),
                 "order_id": order.id,
+                "base_amount": breakdown["base_amount"],
+                "fee_amount": breakdown["fee_amount"],
+                "total_amount": breakdown["total_amount"],
+                "fee_percentage": breakdown["fee_percentage"],
+                "currency": breakdown["currency"],
             }
         )
 
