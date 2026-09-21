@@ -72,3 +72,24 @@ def buyer_processing_surcharge(base_amount: Decimal | int | float) -> dict:
         "fee_percentage": percentage,
         "charged_total": base + fee,
     }
+
+
+def public_processing_breakdown(base_amount: Decimal | int | float) -> dict:
+    """
+    Desglose público para checkout: base del ítem, recargo MP y total a cobrar.
+    Montos en enteros COP (sin centavos).
+    """
+    base = Decimal(str(base_amount or 0)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    if base < 0:
+        base = Decimal("0")
+    surcharge = buyer_processing_surcharge(base)
+    fee = surcharge["payment_fee"]
+    total = surcharge["charged_total"]
+    return {
+        "base_amount": int(base),
+        "fee_amount": int(fee),
+        "total_amount": int(total),
+        "fee_percentage": surcharge["fee_percentage"],
+        "currency": "COP",
+        "payment_fee": int(fee),
+    }

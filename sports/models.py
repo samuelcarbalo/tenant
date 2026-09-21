@@ -30,6 +30,24 @@ class Tournament(TimeStampedModel):
     sport_type = models.CharField(
         max_length=20, choices=SPORT_TYPES, default="football", db_index=True
     )
+    CATEGORY_CHOICES = [
+        ("libre", "Libre"),
+        ("sub-13", "Sub-13"),
+        ("sub-15", "Sub-15"),
+        ("sub-17", "Sub-17"),
+        ("sub-20", "Sub-20"),
+        ("femenino", "Femenino"),
+        ("mixto", "Mixto"),
+        ("veteranos", "Veteranos"),
+    ]
+    category = models.CharField(
+        max_length=20,
+        choices=CATEGORY_CHOICES,
+        default="libre",
+        db_index=True,
+        verbose_name="Categoría",
+        help_text="Categoría competitiva del torneo (fútbol y demás deportes).",
+    )
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="tournaments"
     )

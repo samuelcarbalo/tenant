@@ -5,6 +5,7 @@ import mercadopago
 from django.conf import settings
 
 from payments.packages import get_package
+from payments.services.billing import public_processing_breakdown
 from payments.services.mp_config import get_mp_config
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,13 @@ class MercadoPagoService:
                 "Mercado Pago access token no configurado (modo %s) — placeholder.",
                 "producción" if self.is_production else "prueba",
             )
-        self.sdk = mercadopago.SDK(access_token)
+        from mercadopago.config import RequestOptions
+
+        request_options = RequestOptions(
+            connection_timeout=12.0,
+            max_retries=1,
+        )
+        self.sdk = mercadopago.SDK(access_token, request_options=request_options)
 
     def create_preference(
         self,
@@ -64,6 +71,8 @@ class MercadoPagoService:
         user_email: str,
         user_id: str,
         order_id: str,
+        base_amount: int | None = None,
+        fee_amount: int = 0,
     ) -> dict:
         package = get_package(package_id)
         if not package:
@@ -88,17 +97,36 @@ class MercadoPagoService:
             "pending": f"{frontend_url}/creditos/resultado?status=pending",
         }
 
-        preference_data = {
-            "items": [
+        breakdown = public_processing_breakdown(
+            base_amount if base_amount is not None else package["price_cop"]
+        )
+        item_base = int(breakdown["base_amount"])
+        item_fee = int(fee_amount if fee_amount else breakdown["fee_amount"])
+
+        items = [
+            {
+                "id": package_id,
+                "title": f"{package['name']} — {package['credits']} créditos CordobaTech",
+                "description": package["description"],
+                "quantity": 1,
+                "currency_id": "COP",
+                "unit_price": float(item_base),
+            }
+        ]
+        if item_fee > 0:
+            items.append(
                 {
-                    "id": package_id,
-                    "title": f"{package['name']} — {package['credits']} créditos CordobaTech",
-                    "description": package["description"],
+                    "id": f"{package_id}-fee",
+                    "title": "Costo de operación (Mercado Pago)",
+                    "description": "Recargo por procesamiento de pago con Mercado Pago",
                     "quantity": 1,
                     "currency_id": "COP",
-                    "unit_price": float(package["price_cop"]),
+                    "unit_price": float(item_fee),
                 }
-            ],
+            )
+
+        preference_data = {
+            "items": items,
             "payer": {"email": user_email},
             "back_urls": back_urls,
             "auto_return": "approved",
@@ -108,6 +136,9 @@ class MercadoPagoService:
                 "package_id": package_id,
                 "credits": package["credits"],
                 "order_id": str(order_id),
+                "base_amount": item_base,
+                "fee_amount": item_fee,
+                "total_amount": item_base + item_fee,
             },
         }
 

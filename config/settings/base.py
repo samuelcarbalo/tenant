@@ -203,9 +203,26 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 # ── Mercado Pago (Checkout Pro) ─────────────────────────────────────────────
 # Credenciales en tenant/.env — ver .env.example
+# El modo activo lo define MercadoPagoConfig.is_production (DB).
+# Fallback Render: pares TEST/PROD, luego el genérico si el prefijo coincide.
 MERCADOPAGO_PUBLIC_KEY = os.getenv("MERCADOPAGO_PUBLIC_KEY", "")
 MERCADOPAGO_ACCESS_TOKEN = os.getenv("MERCADOPAGO_ACCESS_TOKEN", "")
+MERCADOPAGO_PUBLIC_KEY_TEST = os.getenv("MERCADOPAGO_PUBLIC_KEY_TEST", "")
+MERCADOPAGO_ACCESS_TOKEN_TEST = os.getenv("MERCADOPAGO_ACCESS_TOKEN_TEST", "")
+MERCADOPAGO_PUBLIC_KEY_PROD = os.getenv("MERCADOPAGO_PUBLIC_KEY_PROD", "")
+MERCADOPAGO_ACCESS_TOKEN_PROD = os.getenv("MERCADOPAGO_ACCESS_TOKEN_PROD", "")
+MERCADOPAGO_IS_PRODUCTION = os.getenv("MERCADOPAGO_IS_PRODUCTION", "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 MERCADOPAGO_WEBHOOK_URL = os.getenv("MERCADOPAGO_WEBHOOK_URL", "")
+_mp_webhook_async = os.getenv("MP_WEBHOOK_ASYNC")
+if _mp_webhook_async is None:
+    MP_WEBHOOK_ASYNC = True
+else:
+    MP_WEBHOOK_ASYNC = _mp_webhook_async.strip().lower() in ("1", "true", "yes", "on")
 # Secreto de firma de webhooks (panel MP → Webhooks → Secret key)
 MERCADOPAGO_WEBHOOK_SECRET = os.getenv("MERCADOPAGO_WEBHOOK_SECRET", "")
 # Si es "true"/"false" fuerza validación; por defecto se exige fuera de DEBUG

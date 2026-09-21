@@ -449,6 +449,8 @@ class CheckoutAPITests(EcommerceBaseTest):
         self.assertEqual(res.data["subtotal"], 45000)
         self.assertEqual(res.data["currency"], "COP")
         self.assertGreater(res.data["payment_fee"], 0)
+        self.assertEqual(res.data["base_amount"], 45000)
+        self.assertEqual(res.data["fee_amount"], res.data["payment_fee"])
         self.assertFalse(ShopOrder.objects.filter(buyer=self.buyer).exists())
 
     def test_checkout_requires_auth(self):

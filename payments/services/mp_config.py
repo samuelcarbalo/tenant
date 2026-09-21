@@ -69,33 +69,95 @@ def get_or_create_mp_config() -> MercadoPagoConfig | None:
             return None
 
 
+def _setting(name: str) -> str:
+    return str(getattr(settings, name, "") or "").strip()
+
+
+def _looks_test(value: str) -> bool:
+    return value.upper().startswith("TEST-")
+
+
+def _looks_live(value: str) -> bool:
+    return value.upper().startswith("APP_USR-")
+
+
+def _compatible(value: str, *, is_production: bool) -> str:
+    """
+    Evita mezclar credenciales TEST y LIVE.
+    Prefijos oficiales MP: TEST- (sandbox) y APP_USR- (producción).
+    """
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if is_production and _looks_test(value):
+        logger.error("Se omitió credencial TEST- en modo producción.")
+        return ""
+    if not is_production and _looks_live(value):
+        logger.error("Se omitió credencial LIVE (APP_USR-) en modo sandbox.")
+        return ""
+    return value
+
+
+def _first_compatible(*values: str, is_production: bool) -> str:
+    for raw in values:
+        compatible = _compatible(raw, is_production=is_production)
+        if compatible:
+            return compatible
+    return ""
+
+
+def _env_flag(name: str) -> bool:
+    return _setting(name).lower() in ("1", "true", "yes", "on")
+
+
 def get_mp_config() -> dict[str, str | bool]:
     """
     Devuelve credenciales activas según is_production en admin.
 
-    Fallback a variables de entorno si la fila singleton está vacía
-    (migración gradual desde Render env vars).
+    Orden de resolución por entorno:
+      1) Campos DB del modo activo (test o prod)
+      2) Variables de entorno específicas (_TEST / _PROD)
+      3) Fallback genérico MERCADOPAGO_ACCESS_TOKEN / PUBLIC_KEY de Render
+         solo si el prefijo coincide con el modo activo
     """
-    cfg = MercadoPagoConfig.load()
+    cfg = None
+    try:
+        cfg = MercadoPagoConfig.load()
+    except (OperationalError, ProgrammingError) as exc:
+        logger.warning("mercadopago_config no disponible, usando env: %s", exc)
+        _safe_rollback()
 
-    is_production = cfg.is_production
+    is_production = bool(cfg.is_production) if cfg is not None else _env_flag("MERCADOPAGO_IS_PRODUCTION")
+
     if is_production:
-        access_token = cfg.access_token_prod or getattr(
-            settings, "MERCADOPAGO_ACCESS_TOKEN", ""
+        access_token = _first_compatible(
+            (cfg.access_token_prod if cfg else ""),
+            _setting("MERCADOPAGO_ACCESS_TOKEN_PROD"),
+            _setting("MERCADOPAGO_ACCESS_TOKEN"),
+            is_production=True,
         )
-        public_key = cfg.public_key_prod or getattr(
-            settings, "MERCADOPAGO_PUBLIC_KEY", ""
+        public_key = _first_compatible(
+            (cfg.public_key_prod if cfg else ""),
+            _setting("MERCADOPAGO_PUBLIC_KEY_PROD"),
+            _setting("MERCADOPAGO_PUBLIC_KEY"),
+            is_production=True,
         )
     else:
-        access_token = cfg.access_token_test or getattr(
-            settings, "MERCADOPAGO_ACCESS_TOKEN", ""
+        access_token = _first_compatible(
+            (cfg.access_token_test if cfg else ""),
+            _setting("MERCADOPAGO_ACCESS_TOKEN_TEST"),
+            _setting("MERCADOPAGO_ACCESS_TOKEN"),
+            is_production=False,
         )
-        public_key = cfg.public_key_test or getattr(
-            settings, "MERCADOPAGO_PUBLIC_KEY", ""
+        public_key = _first_compatible(
+            (cfg.public_key_test if cfg else ""),
+            _setting("MERCADOPAGO_PUBLIC_KEY_TEST"),
+            _setting("MERCADOPAGO_PUBLIC_KEY"),
+            is_production=False,
         )
 
     return {
         "is_production": is_production,
-        "access_token": (access_token or "").strip(),
-        "public_key": (public_key or "").strip(),
+        "access_token": access_token,
+        "public_key": public_key,
     }

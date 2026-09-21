@@ -64,9 +64,10 @@ MERCADOPAGO_WEBHOOK_SECRET=...   # firma x-signature
 ## 3) Flujo hacia la PWA
 
 1. MP envía POST al webhook con `x-signature` / `x-request-id`
-2. Backend valida firma, guarda `MercadoPagoWebhookEvent`, consulta el pago
-3. Si `approved` → acredita créditos + crea `Notification` (`payment_success`)
-4. La PWA consulta `GET /api/v1/notifications/` (poll cada 30s en el panel) y muestra el historial
-5. El usuario marca leídas con `POST /notifications/{id}/mark-read/`
+2. Backend valida firma, guarda `MercadoPagoWebhookEvent` y responde **200 `received`** de inmediato
+3. El pago se consulta y acredita en segundo plano (sandbox o live según `is_production`)
+4. Si `approved` → acredita créditos / cumple pedido de tienda + `Notification` (`payment_success`)
+5. La PWA consulta `GET /api/v1/payments/status/` y `GET /api/v1/notifications/`
+6. El usuario marca leídas con `POST /notifications/{id}/mark-read/`
 
 No hay WebSocket de notificaciones: el panel usa REST + polling.

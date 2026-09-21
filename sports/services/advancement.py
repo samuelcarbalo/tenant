@@ -34,6 +34,17 @@ def resolve_team_source(source, tournament, from_phase=None):
             return None
         return standings[rank - 1]["team"]
 
+    if source_type == "seed":
+        rank = int(source.get("rank", 1))
+        teams = list(
+            Team.objects.filter(tournament=tournament, is_active=True).order_by(
+                "created_at", "name"
+            )
+        )
+        if len(teams) < rank:
+            return None
+        return teams[rank - 1]
+
     if source_type == "overall_rank":
         phase = from_phase or tournament.phases.filter(slug=source.get("phase_slug")).first()
         if not phase:
