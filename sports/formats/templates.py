@@ -218,6 +218,118 @@ FORMAT_TEMPLATES = {
             },
         ],
     },
+    "knockout_direct_8": {
+        "id": "knockout_direct_8",
+        "label": "Eliminación directa (8 equipos)",
+        "description": "Cuadro de 8: cuartos, semifinales y final. Sin fase todos contra todos.",
+        "sport_types": ["football", "softball", "basketball", "volleyball"],
+        "structure_mode": "structured",
+        "default_max_teams": 8,
+        "phases": [
+            {
+                "name": "Cuartos de final",
+                "slug": "cuartos",
+                "phase_type": "knockout",
+                "order": 1,
+                "config": {"rounds": ["quarterfinal"]},
+                "bracket": {
+                    "name": "Cuartos",
+                    "nodes": [
+                        {
+                            "round": "quarterfinal",
+                            "position": 1,
+                            "home_source": {"type": "seed", "rank": 1},
+                            "away_source": {"type": "seed", "rank": 8},
+                        },
+                        {
+                            "round": "quarterfinal",
+                            "position": 2,
+                            "home_source": {"type": "seed", "rank": 4},
+                            "away_source": {"type": "seed", "rank": 5},
+                        },
+                        {
+                            "round": "quarterfinal",
+                            "position": 3,
+                            "home_source": {"type": "seed", "rank": 2},
+                            "away_source": {"type": "seed", "rank": 7},
+                        },
+                        {
+                            "round": "quarterfinal",
+                            "position": 4,
+                            "home_source": {"type": "seed", "rank": 3},
+                            "away_source": {"type": "seed", "rank": 6},
+                        },
+                    ],
+                },
+            },
+            {
+                "name": "Semifinales",
+                "slug": "semifinales",
+                "phase_type": "knockout",
+                "order": 2,
+                "config": {"rounds": ["semifinal"]},
+                "bracket": {
+                    "name": "Semifinales",
+                    "nodes": [
+                        {
+                            "round": "semifinal",
+                            "position": 1,
+                            "home_source": {
+                                "type": "bracket_winner",
+                                "round": "quarterfinal",
+                                "position": 1,
+                            },
+                            "away_source": {
+                                "type": "bracket_winner",
+                                "round": "quarterfinal",
+                                "position": 2,
+                            },
+                        },
+                        {
+                            "round": "semifinal",
+                            "position": 2,
+                            "home_source": {
+                                "type": "bracket_winner",
+                                "round": "quarterfinal",
+                                "position": 3,
+                            },
+                            "away_source": {
+                                "type": "bracket_winner",
+                                "round": "quarterfinal",
+                                "position": 4,
+                            },
+                        },
+                    ],
+                },
+            },
+            {
+                "name": "Final",
+                "slug": "final",
+                "phase_type": "knockout",
+                "order": 3,
+                "config": {"rounds": ["final"]},
+                "bracket": {
+                    "name": "Final",
+                    "nodes": [
+                        {
+                            "round": "final",
+                            "position": 1,
+                            "home_source": {
+                                "type": "bracket_winner",
+                                "round": "semifinal",
+                                "position": 1,
+                            },
+                            "away_source": {
+                                "type": "bracket_winner",
+                                "round": "semifinal",
+                                "position": 2,
+                            },
+                        }
+                    ],
+                },
+            },
+        ],
+    },
 }
 
 

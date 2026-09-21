@@ -188,21 +188,30 @@ class IsCoachOfTeam(permissions.BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        # Si es superuser, permitir todo
-        if request.user.is_superuser:
+        # Super Admin Root (is_superuser / admin_level 1 / SUPER_ADMIN): control total
+        if _is_sports_super_admin(request.user):
             return True
 
         # Obtener el equipo del jugador
         if hasattr(obj, "team"):
             team = obj.team
-        elif hasattr(obj, "tournament"):
+        elif hasattr(obj, "coach_email"):
             # obj es un Team
             team = obj
         else:
             return False
 
-        # Verificar si el email del usuario coincide con coach_email del equipo
-        return request.user.email == team.coach_email
+        user = request.user
+        coach_email = (getattr(team, "coach_email", None) or "").strip().lower()
+        user_email = (getattr(user, "email", None) or "").strip().lower()
+        if coach_email and user_email and coach_email == user_email:
+            return True
+        if getattr(team, "posted_by_id", None) == user.id:
+            return True
+        tournament = getattr(team, "tournament", None)
+        if tournament is not None and getattr(tournament, "posted_by_id", None) == user.id:
+            return True
+        return False
 
 
 class IsOrganizationMember(permissions.BasePermission):

@@ -74,10 +74,12 @@ class TournamentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tournament
         fields = [
+            "id",
             "name",
             "slug",
             "description",
             "sport_type",
+            "category",
             "start_date",
             "end_date",
             "registration_deadline",
@@ -94,7 +96,10 @@ class TournamentCreateSerializer(serializers.ModelSerializer):
             "lineup_size",
             "regulation_innings",
             "mercy_rule_enabled",
+            "status",
+            "is_active",
         ]
+        read_only_fields = ["id", "status", "is_active"]
 
     def validate(self, data):
         lineup_size = data.get("lineup_size", 9)
@@ -130,6 +135,7 @@ class TournamentListSerializer(serializers.ModelSerializer):
             "slug",
             "sport_type",
             "sport_type_display",
+            "category",
             "organization",
             "organization_name",
             "start_date",
@@ -260,10 +266,16 @@ class PlayerListSerializer(serializers.ModelSerializer):
     """Serializer para listado de jugadores"""
 
     team_name = serializers.CharField(source="team.name", read_only=True)
+    team_logo = serializers.CharField(source="team.logo", read_only=True, allow_blank=True)
+    team_abbreviation = serializers.CharField(source="team.abbreviation", read_only=True)
     position_display = serializers.CharField(
         source="get_position_display", read_only=True
     )
     tournament_slug = serializers.CharField(source="tournament.slug", read_only=True)
+    tournament_name = serializers.CharField(source="tournament.name", read_only=True)
+    tournament_category = serializers.CharField(
+        source="tournament.get_category_display", read_only=True
+    )
 
     class Meta:
         model = Player
@@ -280,6 +292,8 @@ class PlayerListSerializer(serializers.ModelSerializer):
             "position_display",
             "team",
             "team_name",
+            "team_logo",
+            "team_abbreviation",
             "photo",
             "is_captain",
             "matches_played",
@@ -293,6 +307,8 @@ class PlayerListSerializer(serializers.ModelSerializer):
             "birth_date",
             "tournament",
             "tournament_slug",
+            "tournament_name",
+            "tournament_category",
             # Bateo softbol
             "at_bats",
             "hits",

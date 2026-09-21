@@ -65,7 +65,11 @@ from .services.structure import (
     assign_teams_to_group,
     generate_round_robin_fixtures,
 )
-from .services.advancement import advance_phase as run_advance_phase, SourceResolutionError
+from .services.advancement import (
+    advance_phase as run_advance_phase,
+    SourceResolutionError,
+    populate_knockout_nodes,
+)
 from sports.models import BracketNode
 from core.permissions import (
     IsOrganizationMember,
@@ -210,7 +214,8 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
             tournament = serializer.save(
                 posted_by=user,
                 organization=org,
-                status="active",  # Siempre se crea como activo
+                status="active",
+                is_active=True,
             )
 
             if format_template and format_template not in ("", "legacy_league"):
@@ -345,7 +350,15 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
                 return Response({"error": "Grupo no encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
         try:
-            if group or not phase.groups.exists():
+            if phase.phase_type == "knockout" and hasattr(phase, "bracket"):
+                matches = populate_knockout_nodes(
+                    phase.bracket,
+                    tournament,
+                    request.user,
+                    match_date=data["match_date"],
+                    venue=data.get("venue", ""),
+                )
+            elif group or not phase.groups.exists():
                 matches = generate_round_robin_fixtures(
                     tournament=tournament,
                     phase=phase,
@@ -697,10 +710,16 @@ class TeamViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         return Response(serializer.data)
 
     def perform_create(self, serializer):
-        """CORREGIDO: Asignar posted_by y organization automáticamente"""
+        """Asignar posted_by. El equipo queda en la organización del torneo."""
+        tournament = serializer.validated_data.get("tournament")
+        org = getattr(tournament, "organization", None) if tournament is not None else None
+        if not org:
+            org = getattr(self.request.user, "organization", None)
+        if not org:
+            org = resolve_request_organization(self.request)
         serializer.save(
             posted_by=self.request.user,
-            organization=self.request.user.organization,
+            organization=org,
         )
 
     def perform_update(self, serializer):
