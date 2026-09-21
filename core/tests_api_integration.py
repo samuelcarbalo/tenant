@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -16,6 +16,7 @@ from jobs.models import JobOffer
 from moderation.models import ReportePublicacion
 from organizations.models import Organization
 from payments.models import PaymentOrder, TransaccionFacturacion
+from payments.services.mercadopago_service import MercadoPagoService
 from payments.services.payment_processor import apply_approved_payment
 from real_estate.models import RealEstateOffer
 
@@ -145,13 +146,14 @@ class PaymentsAPITests(BaseIntegrationTestCase):
         self.assertIn("public_key", res.data)
         self.assertIsInstance(res.data["public_key"], str)
 
-    @patch("payments.views.MercadoPagoService")
-    def test_create_preference(self, MockMP):
-        mock_instance = MockMP.return_value
-        mock_instance.create_preference.return_value = {
+    @patch("payments.services.mercadopago_service.mercadopago.SDK")
+    @patch.object(MercadoPagoService, "create_preference")
+    def test_create_preference(self, mock_create, _mock_sdk):
+        mock_create.return_value = {
             "preference_id": "pref-test-123",
             "init_point": "https://mp.test/checkout",
             "sandbox_init_point": "https://mp.test/sandbox",
+            "is_production": False,
         }
         res = self.manager_client.post(
             f"{API}/payments/create-preference/",
@@ -169,14 +171,19 @@ class PaymentsAPITests(BaseIntegrationTestCase):
         order = PaymentOrder.objects.get(user=self.manager, package_id="basico")
         self.assertEqual(order.amount_cop, res.data["total_amount"])
         self.assertEqual(
-            mock_instance.create_preference.call_args.kwargs["base_amount"],
+            mock_create.call_args.kwargs["base_amount"],
             20000,
         )
         self.assertEqual(
-            mock_instance.create_preference.call_args.kwargs["fee_amount"],
+            mock_create.call_args.kwargs["fee_amount"],
             res.data["fee_amount"],
         )
 
+    @override_settings(
+        DEBUG=True,
+        MERCADOPAGO_WEBHOOK_SECRET="",
+        MERCADOPAGO_WEBHOOK_ENFORCE_SIGNATURE=False,
+    )
     def test_webhook_approves_and_credits(self):
         order = PaymentOrder.objects.create(
             user=self.user,
@@ -184,7 +191,7 @@ class PaymentsAPITests(BaseIntegrationTestCase):
             credits_amount=20,
             amount_cop=20000,
         )
-        with patch("payments.views.MercadoPagoService") as MockMP:
+        with patch("payments.services.webhook_processor.MercadoPagoService") as MockMP:
             mock_instance = MockMP.return_value
             mock_instance.get_payment.return_value = {
                 "status": "approved",
@@ -196,9 +203,61 @@ class PaymentsAPITests(BaseIntegrationTestCase):
                 format="json",
             )
         self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data.get("status"), "received")
         self.user.refresh_from_db()
         self.assertEqual(self.user.credits, 30)  # 10 + 20
+        order.refresh_from_db()
+        self.assertEqual(order.status, "approved")
+        self.assertEqual(order.mp_payment_id, "12345")
+        self.assertTrue(order.credits_applied)
         self.assertTrue(TransaccionFacturacion.objects.filter(payment_order=order).exists())
+
+        history = self.user_client.get(f"{API}/payments/my-purchases/")
+        self.assertEqual(history.status_code, status.HTTP_200_OK)
+        row = next(item for item in history.data if item["id"] == str(order.id))
+        self.assertEqual(row["mp_payment_id"], "12345")
+        self.assertEqual(row["status"], "approved")
+        self.assertEqual(row["amount_cop"], 20000)
+
+        lookup = self.user_client.get(
+            f"{API}/payments/status/",
+            {"order_id": str(order.id), "payment_id": "12345"},
+        )
+        self.assertEqual(lookup.status_code, status.HTTP_200_OK)
+        self.assertTrue(lookup.data["credits_applied"])
+        self.assertEqual(lookup.data["mp_payment_id"], "12345")
+
+    @override_settings(
+        DEBUG=True,
+        MERCADOPAGO_WEBHOOK_SECRET="",
+        MERCADOPAGO_WEBHOOK_ENFORCE_SIGNATURE=False,
+    )
+    def test_webhook_approves_shop_order(self):
+        from ecommerce.models import ShopOrder
+
+        shop_order = ShopOrder.objects.create(
+            organization=self.org,
+            buyer=self.user,
+            subtotal_cop=20000,
+            total_cop=20815,
+        )
+        with patch("payments.services.webhook_processor.MercadoPagoService") as MockMP:
+            mock_instance = MockMP.return_value
+            mock_instance.get_payment.return_value = {
+                "status": "approved",
+                "external_reference": str(shop_order.id),
+            }
+            res = self.anon.post(
+                f"{API}/payments/webhook/",
+                {"type": "payment", "data": {"id": "shop-pay-1"}},
+                format="json",
+            )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data.get("status"), "received")
+        shop_order.refresh_from_db()
+        self.assertEqual(shop_order.status, "approved")
+        self.assertTrue(shop_order.fulfilled)
+        self.assertEqual(shop_order.mp_payment_id, "shop-pay-1")
 
     def test_billing_breakdown(self):
         order = PaymentOrder.objects.create(

@@ -4,6 +4,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
 from payments.models import MercadoPagoConfig
+from payments.services.mp_config import get_mp_config
 
 User = get_user_model()
 
@@ -46,7 +47,68 @@ class MercadoPagoConfigTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["public_key"], "DB_TEST_PUBLIC")
         self.assertFalse(response.data["is_production"])
+        self.assertEqual(response.data["environment"], "sandbox")
         self.assertNotIn("access_token", response.data)
+        self.assertNotIn("access_token_test", response.data)
+        self.assertNotIn("access_token_prod", response.data)
+
+    @override_settings(
+        MERCADOPAGO_PUBLIC_KEY_TEST="TEST-ENV-PK",
+        MERCADOPAGO_ACCESS_TOKEN_TEST="TEST-ENV-TOKEN",
+        MERCADOPAGO_PUBLIC_KEY_PROD="APP_USR-ENV-PK",
+        MERCADOPAGO_ACCESS_TOKEN_PROD="APP_USR-ENV-TOKEN",
+        MERCADOPAGO_PUBLIC_KEY="APP_USR-GENERIC-PK",
+        MERCADOPAGO_ACCESS_TOKEN="APP_USR-GENERIC-TOKEN",
+    )
+    def test_sandbox_uses_test_env_and_ignores_live_generic(self):
+        self.cfg.is_production = False
+        self.cfg.public_key_test = ""
+        self.cfg.access_token_test = ""
+        self.cfg.public_key_prod = "APP_USR-DB-PK"
+        self.cfg.access_token_prod = "APP_USR-DB-TOKEN"
+        self.cfg.save()
+
+        cfg = get_mp_config()
+        self.assertFalse(cfg["is_production"])
+        self.assertEqual(cfg["public_key"], "TEST-ENV-PK")
+        self.assertEqual(cfg["access_token"], "TEST-ENV-TOKEN")
+
+    @override_settings(
+        MERCADOPAGO_PUBLIC_KEY_TEST="TEST-ENV-PK",
+        MERCADOPAGO_ACCESS_TOKEN_TEST="TEST-ENV-TOKEN",
+        MERCADOPAGO_PUBLIC_KEY_PROD="APP_USR-ENV-PK",
+        MERCADOPAGO_ACCESS_TOKEN_PROD="APP_USR-ENV-TOKEN",
+        MERCADOPAGO_PUBLIC_KEY="TEST-GENERIC-PK",
+        MERCADOPAGO_ACCESS_TOKEN="TEST-GENERIC-TOKEN",
+    )
+    def test_production_uses_prod_env_and_ignores_test_generic(self):
+        self.cfg.is_production = True
+        self.cfg.public_key_test = "TEST-DB-PK"
+        self.cfg.access_token_test = "TEST-DB-TOKEN"
+        self.cfg.public_key_prod = ""
+        self.cfg.access_token_prod = ""
+        self.cfg.save()
+
+        cfg = get_mp_config()
+        self.assertTrue(cfg["is_production"])
+        self.assertEqual(cfg["public_key"], "APP_USR-ENV-PK")
+        self.assertEqual(cfg["access_token"], "APP_USR-ENV-TOKEN")
+
+    @override_settings(
+        MERCADOPAGO_PUBLIC_KEY_TEST="",
+        MERCADOPAGO_ACCESS_TOKEN_TEST="",
+        MERCADOPAGO_PUBLIC_KEY="APP_USR-GENERIC-PK",
+        MERCADOPAGO_ACCESS_TOKEN="APP_USR-GENERIC-TOKEN",
+    )
+    def test_sandbox_rejects_live_generic_fallback(self):
+        self.cfg.is_production = False
+        self.cfg.public_key_test = ""
+        self.cfg.access_token_test = ""
+        self.cfg.save()
+
+        cfg = get_mp_config()
+        self.assertEqual(cfg["public_key"], "")
+        self.assertEqual(cfg["access_token"], "")
 
     def test_singleton_enforces_pk_one(self):
         second = MercadoPagoConfig(is_production=True, public_key_prod="X")

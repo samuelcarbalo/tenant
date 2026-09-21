@@ -95,7 +95,7 @@ class DiscountAdmin(admin.ModelAdmin):
 
 @admin.register(StoreSettings)
 class StoreSettingsAdmin(admin.ModelAdmin):
-    list_display = ("organization", "store_logo", "updated_at")
+    list_display = ("organization", "shipping_cost_cop", "store_logo", "updated_at")
     search_fields = ("organization__name", "organization__slug")
 
 
@@ -107,6 +107,8 @@ class ShopOrderAdmin(admin.ModelAdmin):
         "status",
         "delivery_status",
         "total_cop",
+        "shipping_cop",
+        "payment_fee_cop",
         "discount_code",
         "fulfilled",
         "created_at",

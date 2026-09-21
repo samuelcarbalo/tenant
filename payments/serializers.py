@@ -45,9 +45,12 @@ class PaymentOrderSerializer(serializers.ModelSerializer):
             "package_id",
             "credits_amount",
             "amount_cop",
+            "mp_preference_id",
+            "mp_payment_id",
             "status",
             "credits_applied",
             "created_at",
+            "updated_at",
         ]
 
 

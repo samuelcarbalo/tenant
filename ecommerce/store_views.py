@@ -75,13 +75,19 @@ class StoreSettingsAPIView(APIView):
                 {
                     "id": str(settings_obj.id) if settings_obj else None,
                     "store_logo": logo_url,
+                    "shipping_cost_cop": (
+                        str(settings_obj.shipping_cost_cop) if settings_obj else "0.00"
+                    ),
                     "updated_at": settings_obj.updated_at if settings_obj else None,
                 },
                 status=status.HTTP_200_OK,
             )
         except (ProgrammingError, OperationalError, DatabaseError):
             # Retorno seguro mientras la tabla termina de crearse en PostgreSQL.
-            return Response({"store_logo": None}, status=status.HTTP_200_OK)
+            return Response(
+                {"store_logo": None, "shipping_cost_cop": "0.00"},
+                status=status.HTTP_200_OK,
+            )
 
 
     def patch(self, request):

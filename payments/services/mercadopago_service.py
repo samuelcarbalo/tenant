@@ -56,7 +56,13 @@ class MercadoPagoService:
                 "Mercado Pago access token no configurado (modo %s) — placeholder.",
                 "producción" if self.is_production else "prueba",
             )
-        self.sdk = mercadopago.SDK(access_token)
+        from mercadopago.config import RequestOptions
+
+        request_options = RequestOptions(
+            connection_timeout=12.0,
+            max_retries=1,
+        )
+        self.sdk = mercadopago.SDK(access_token, request_options=request_options)
 
     def create_preference(
         self,
