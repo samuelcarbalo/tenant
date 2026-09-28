@@ -257,3 +257,69 @@ class FootballTeamAndRbacTests(TestCase):
         second_resolved = resolve_team_source({"type": "seed", "rank": 2}, self.tournament)
         self.assertEqual(first.id, self.team.id)
         self.assertEqual(second_resolved.id, second.id)
+
+
+class SuperAdminLevel2FootballTournamentTests(TestCase):
+    """Super Admin Nivel 2 crea, edita y elimina torneos sin suscripción de créditos."""
+
+    def setUp(self):
+        cache.clear()
+        self.org = Organization.objects.create(name="Chever Org", slug="chever-org")
+        self.level2 = User.objects.create_user(
+            email="l2-sports@example.com",
+            username="l2sports",
+            password="secret123",
+            organization=None,
+            role="admin",
+            is_staff=True,
+            admin_level=2,
+            sports_module_active=False,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.level2)
+        self.today = timezone.now().date()
+
+    def _payload(self, **overrides):
+        data = {
+            "name": "Copa Nivel 2",
+            "slug": "copa-nivel-2",
+            "description": "Torneo creado por Super Admin Nivel 2",
+            "sport_type": "football",
+            "category": "libre",
+            "start_date": str(self.today + timedelta(days=14)),
+            "end_date": str(self.today + timedelta(days=60)),
+            "registration_deadline": str(self.today + timedelta(days=7)),
+            "max_teams": 8,
+            "min_players_per_team": 7,
+            "max_players_per_team": 22,
+            "format_template": "round_robin_single",
+        }
+        data.update(overrides)
+        return data
+
+    def test_level2_creates_edits_and_deletes_football_tournament(self):
+        created = self.client.post(
+            "/api/v1/sports/tournaments/",
+            self._payload(),
+            format="json",
+            HTTP_X_TENANT="chever-org",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["sport_type"], "football")
+        self.assertEqual(created.data["status"], "active")
+
+        updated = self.client.patch(
+            "/api/v1/sports/tournaments/copa-nivel-2/",
+            {"name": "Copa Nivel 2 Editada", "max_teams": 10},
+            format="json",
+            HTTP_X_TENANT="chever-org",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["name"], "Copa Nivel 2 Editada")
+
+        deleted = self.client.delete(
+            "/api/v1/sports/tournaments/copa-nivel-2/",
+            HTTP_X_TENANT="chever-org",
+        )
+        self.assertIn(deleted.status_code, (200, 204), getattr(deleted, "data", deleted.content))
+        self.assertFalse(Tournament.objects.filter(slug="copa-nivel-2").exists())

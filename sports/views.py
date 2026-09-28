@@ -72,7 +72,6 @@ from .services.advancement import (
 )
 from sports.models import BracketNode
 from core.permissions import (
-    IsOrganizationMember,
     IsCoachOfTeam,
     IsSportsSuperAdminOrOrgMember,
     _is_sports_super_admin,
@@ -1933,8 +1932,8 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
         # Todas las operaciones de lectura son públicas
         if self.action in ["list", "retrieve", "by_position", "active", "track_click"]:
             return [AllowAny()]
-        # Crear, editar, eliminar requieren autenticación
-        return [IsAuthenticated(), IsOrganizationMember()]
+        # Super Admin L1/L2: CRUD global. Resto: miembro de la organización.
+        return [IsAuthenticated(), IsSportsSuperAdminOrOrgMember()]
 
     def get_queryset(self):
         queryset = AdvertisementBanner.objects.all()

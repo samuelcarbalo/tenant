@@ -5,7 +5,13 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 
-from core.permissions import IsSuperUser, user_admin_level, user_is_platform_elevated
+from core.permissions import (
+    LEVEL1_FORBIDDEN_MESSAGE,
+    IsSuperUser,
+    user_admin_level,
+    user_is_platform_elevated,
+    user_is_super_admin_l1,
+)
 from payments.models import MercadoPagoWebhookEvent, PaymentOrder, TransaccionFacturacion
 from payments.packages import CREDIT_PACKAGES, get_package
 from payments.serializers import (
@@ -293,7 +299,16 @@ def mp_public_config(request):
 @api_view(["GET", "PATCH"])
 @permission_classes([IsAuthenticated, IsAdminUser | IsSuperUser])
 def mp_admin_config(request):
-    """Gestión de credenciales Mercado Pago — IsAdminUser o IsSuperUser (Bearer)."""
+    """
+    Credenciales Mercado Pago.
+    GET: staff o superusuario. PATCH: solo Super Admin Root (Nivel 1).
+    """
+    if request.method != "GET" and not user_is_super_admin_l1(request.user):
+        return Response(
+            {"detail": LEVEL1_FORBIDDEN_MESSAGE},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     config = get_or_create_mp_config()
 
     if config is None:
