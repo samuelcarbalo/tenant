@@ -1,3 +1,4 @@
+from django.db import DatabaseError
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -55,5 +56,9 @@ class NotificationViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=["get"], url_path="unread-count")
     def unread_count(self, request):
-        count = self.get_queryset().filter(read_at__isnull=True).count()
+        try:
+            count = self.get_queryset().filter(read_at__isnull=True).count()
+        except DatabaseError:
+            # ProgrammingError/OperationalError: no tumbar el Navbar con 503.
+            return Response({"unread_count": 0, "warning": "Database not ready"})
         return Response({"unread_count": count})
