@@ -2,6 +2,7 @@
 
 from itertools import combinations
 
+from django.db import transaction
 from django.utils.text import slugify
 
 from sports.formats.templates import get_template
@@ -411,6 +412,78 @@ def _manual_assign(groups, qualifiers, payload_groups):
     if empty:
         raise ValueError("Cada grupo de la segunda fase debe tener al menos un equipo.")
     return [(group, buckets[group.id]) for group in groups]
+
+
+def configure_second_group_phase(
+    tournament: Tournament,
+    *,
+    groups_count,
+    qualified_per_group,
+    assignment_method,
+    playoff_qualifiers=2,
+):
+    """Activa o rearma la segunda fase y reconstruye los playoffs que salen de ella."""
+    if tournament.format_template != "multi_quadrangular_knockout":
+        raise ValueError(
+            "La segunda fase de grupos solo aplica al formato Fase de grupos + playoffs."
+        )
+    try:
+        groups_count = int(groups_count)
+        qualified_per_group = int(qualified_per_group)
+        playoff_qualifiers = int(playoff_qualifiers or 2)
+    except (TypeError, ValueError):
+        raise ValueError("Revisa la cantidad de grupos y de clasificados.")
+    if groups_count not in (1, 2):
+        raise ValueError("Elige 1 o 2 grupos para la segunda fase.")
+    if qualified_per_group < 1 or qualified_per_group > 4:
+        raise ValueError("Indica entre 1 y 4 clasificados por grupo de la primera fase.")
+    if playoff_qualifiers < 1:
+        raise ValueError("Indica cuántos equipos pasan de cada grupo de la segunda fase.")
+    if groups_count * playoff_qualifiers < 2:
+        raise ValueError("Los playoffs necesitan al menos 2 clasificados en total.")
+    method = (assignment_method or "RANDOM").upper()
+    if method not in ("RANDOM", "MANUAL"):
+        raise ValueError("Elige asignación aleatoria o manual.")
+
+    first = (
+        tournament.phases.filter(phase_type="group_stage")
+        .exclude(slug=SECOND_PHASE_SLUG)
+        .order_by("order")
+        .first()
+    )
+    if not first:
+        raise ValueError("El torneo no tiene una primera fase de grupos.")
+
+    later = tournament.phases.filter(order__gt=first.order)
+    if Match.objects.filter(phase__in=later).exists():
+        raise ValueError(
+            "Ya hay partidos en las fases posteriores. No se puede rearmar la segunda fase."
+        )
+
+    with transaction.atomic():
+        later.delete()
+        tournament.has_second_group_phase = True
+        tournament.first_phase_qualified_per_group = qualified_per_group
+        tournament.second_phase_groups_count = groups_count
+        tournament.second_phase_qualified_per_group = playoff_qualifiers
+        tournament.second_phase_assignment_method = method
+        tournament.save(
+            update_fields=[
+                "has_second_group_phase",
+                "first_phase_qualified_per_group",
+                "second_phase_groups_count",
+                "second_phase_qualified_per_group",
+                "second_phase_assignment_method",
+            ]
+        )
+        rules = dict(first.advancement_rules or {})
+        rules["type"] = "top_n_per_group"
+        rules["n"] = qualified_per_group
+        first.advancement_rules = rules
+        first.save(update_fields=["advancement_rules"])
+        _append_second_group_phase(tournament)
+    tournament.refresh_from_db()
+    return tournament
 
 
 def generate_second_group_phase(tournament: Tournament, payload=None):
