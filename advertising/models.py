@@ -46,7 +46,7 @@ class TournamentSponsorship(TimeStampedModel):
 
     class Meta:
         db_table = "tournament_sponsorships"
-        ordering = ["-start_date"]
+        ordering = ["created_at"]
         indexes = [
             models.Index(fields=["tournament", "status", "end_date"]),
         ]
