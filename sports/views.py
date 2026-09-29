@@ -1,9 +1,13 @@
+import logging
+
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import ValidationError
+from django.db import DatabaseError
 from django.db.models import Q, Count, Prefetch, F
+from django.db.utils import OperationalError, ProgrammingError
 from django.core.cache import cache
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -81,6 +85,8 @@ from core.permissions import (
 )
 from sports.access import SportsSubscriptionGuardMixin
 
+logger = logging.getLogger(__name__)
+
 
 class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     """ViewSet para torneos"""
@@ -155,6 +161,31 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(moderation_status="approved")
 
         return queryset.order_by("-start_date")
+
+    def list(self, request, *args, **kwargs):
+        """
+        Si el schema aún no tiene una columna (migración pendiente) o no hay
+        filas iniciales, responde 200 con lista vacía en lugar de 503.
+        """
+        try:
+            return super().list(request, *args, **kwargs)
+        except (ProgrammingError, OperationalError, DatabaseError) as exc:
+            logger.warning("Listado de torneos degradado por la base de datos: %s", exc)
+            try:
+                from django.db import connection
+
+                connection.rollback()
+            except Exception:
+                pass
+            return Response(
+                {
+                    "links": {"next": None, "previous": None},
+                    "count": 0,
+                    "total_pages": 0,
+                    "current_page": 1,
+                    "results": [],
+                }
+            )
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -257,7 +288,7 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     def format_templates(self, request):
         """Plantillas de formato disponibles (cacheadas 1 h)."""
         sport_type = request.query_params.get("sport_type") or "all"
-        cache_key = f"sports:format_templates:{sport_type}"
+        cache_key = f"sports:format_templates:v2:{sport_type}"
         data = cache.get(cache_key)
         if data is None:
             data = list_templates(

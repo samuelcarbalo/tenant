@@ -12,6 +12,16 @@ class SourceResolutionError(ValueError):
     pass
 
 
+def _team_advanced_by_bye(node, tournament, from_phase):
+    """Si un lado del nodo es bye, el otro equipo pasa sin partido."""
+    home_bye = (node.home_source or {}).get("type") == "bye"
+    away_bye = (node.away_source or {}).get("type") == "bye"
+    if home_bye == away_bye:
+        return None
+    source = node.away_source if home_bye else node.home_source
+    return resolve_team_source(source, tournament, from_phase=from_phase)
+
+
 def resolve_team_source(source, tournament, from_phase=None):
     """Resuelve un origen de equipo (grupo, ganador de partido, etc.)."""
     if not source:
@@ -55,15 +65,20 @@ def resolve_team_source(source, tournament, from_phase=None):
             return None
         return standings[rank - 1]["team"]
 
+    if source_type == "bye":
+        return None
+
     if source_type == "bracket_winner":
         node = BracketNode.objects.filter(
             bracket__phase__tournament=tournament,
             round=source.get("round"),
             position=int(source.get("position", 1)),
         ).select_related("match").first()
-        if not node or not node.match or node.match.status != "finished":
+        if not node:
             return None
-        return node.match.winner
+        if node.match_id and node.match.status == "finished":
+            return node.match.winner
+        return _team_advanced_by_bye(node, tournament, from_phase)
 
     if source_type == "match_winner":
         match = Match.objects.filter(id=source.get("match_id"), tournament=tournament).first()

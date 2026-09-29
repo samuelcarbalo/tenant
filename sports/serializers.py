@@ -501,7 +501,7 @@ class CompetitionGroupSerializer(serializers.ModelSerializer):
 
 
 class BracketNodeSerializer(serializers.ModelSerializer):
-    round_display = serializers.CharField(source="get_round_display", read_only=True)
+    round_display = serializers.SerializerMethodField()
     match = MatchListSerializer(read_only=True)
     home_team = serializers.SerializerMethodField()
     away_team = serializers.SerializerMethodField()
@@ -524,6 +524,12 @@ class BracketNodeSerializer(serializers.ModelSerializer):
             "away_label",
         ]
 
+    def get_round_display(self, obj):
+        label = obj.get_round_display()
+        if label == obj.round and str(obj.round).startswith("round_"):
+            return f"Ronda de {str(obj.round).split('_', 1)[1]}"
+        return label
+
     def _resolve(self, obj, side):
         from sports.services.advancement import resolve_team_source
 
@@ -545,8 +551,13 @@ class BracketNodeSerializer(serializers.ModelSerializer):
         if not source:
             return "Por definir"
         t = source.get("type")
+        if t == "bye":
+            return "Pasa de ronda"
         if t == "group_rank":
-            return f"{source.get('rank')}° {source.get('group_slug', 'grupo')}"
+            slug = str(source.get("group_slug") or "")
+            suffix = slug.rsplit("-", 1)[-1]
+            group_name = f"Grupo {suffix.upper()}" if len(suffix) == 1 else slug or "grupo"
+            return f"{source.get('rank')}° {group_name}"
         if t == "overall_rank":
             return f"{source.get('rank')}° fase regular"
         if t == "bracket_winner":

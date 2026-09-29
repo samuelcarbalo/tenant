@@ -167,3 +167,127 @@ class Phase12IntegrationTests(TestCase):
         self.assertEqual(st_a[0]["played"], 1)
         self.assertEqual(len(st_b), 2)
         self.assertEqual(st_b[0]["played"], 0)
+
+    def test_liga_simple_is_a_single_table_without_groups(self):
+        league = Tournament.objects.create(
+            name="Liga Simple",
+            slug="liga-simple",
+            sport_type="football",
+            organization=self.org,
+            posted_by=self.user,
+            start_date="2026-07-01",
+            end_date="2026-08-01",
+        )
+        apply_format_template(league, "round_robin_single", group_count=4)
+        phase = league.phases.get()
+        self.assertEqual(phase.phase_type, "round_robin")
+        self.assertEqual(phase.groups.count(), 0)
+
+        legacy = Tournament.objects.create(
+            name="Liga Legacy",
+            slug="liga-legacy",
+            sport_type="football",
+            organization=self.org,
+            posted_by=self.user,
+            start_date="2026-07-01",
+            end_date="2026-08-01",
+        )
+        apply_format_template(legacy, "legacy_league", group_count=3)
+        self.assertEqual(legacy.phases.count(), 0)
+
+    def test_multi_group_fixtures_stay_inside_each_group(self):
+        tournament = Tournament.objects.create(
+            name="Grupos",
+            slug="grupos-fixture",
+            sport_type="football",
+            organization=self.org,
+            posted_by=self.user,
+            start_date="2026-07-01",
+            end_date="2026-08-01",
+            max_teams=16,
+        )
+        apply_format_template(tournament, "multi_quadrangular", group_count=2)
+        tournament.refresh_from_db()
+        self.assertEqual(tournament.max_teams, 8)
+        phase = tournament.phases.get()
+        groups = list(phase.groups.order_by("order"))
+        self.assertEqual([group.name for group in groups], ["Grupo A", "Grupo B"])
+
+        teams = [
+            Team.objects.create(
+                name=f"Equipo {i}",
+                slug=f"eq-{i}",
+                abbreviation=f"E{i}",
+                tournament=tournament,
+                organization=self.org,
+                posted_by=self.user,
+            )
+            for i in range(1, 9)
+        ]
+        assign_teams_to_group(groups[0], [team.id for team in teams[:4]])
+        assign_teams_to_group(groups[1], [team.id for team in teams[4:]])
+
+        created = []
+        for group in groups:
+            created.extend(
+                generate_round_robin_fixtures(
+                    tournament=tournament,
+                    phase=phase,
+                    group=group,
+                    posted_by=self.user,
+                    match_date=timezone.now(),
+                )
+            )
+
+        self.assertEqual(len(created), 12)
+        ids_a = {team.id for team in teams[:4]}
+        ids_b = {team.id for team in teams[4:]}
+        for match in created:
+            pair = {match.home_team_id, match.away_team_id}
+            self.assertTrue(pair <= ids_a or pair <= ids_b)
+            self.assertEqual(match.group_id, groups[0].id if pair <= ids_a else groups[1].id)
+
+    def test_group_playoffs_follow_requested_group_count(self):
+        tournament = Tournament.objects.create(
+            name="Playoffs",
+            slug="playoffs-cinco-grupos",
+            sport_type="football",
+            organization=self.org,
+            posted_by=self.user,
+            start_date="2026-07-01",
+            end_date="2026-08-01",
+        )
+        apply_format_template(tournament, "multi_quadrangular_knockout", group_count=5)
+        tournament.refresh_from_db()
+        self.assertEqual(tournament.max_teams, 20)
+        phase = tournament.phases.order_by("order").first()
+        self.assertEqual(phase.name, "Fase de grupos")
+        self.assertEqual(phase.groups.count(), 5)
+        self.assertEqual(
+            list(phase.groups.order_by("order").values_list("name", flat=True)),
+            ["Grupo A", "Grupo B", "Grupo C", "Grupo D", "Grupo E"],
+        )
+        first_ko = tournament.phases.order_by("order")[1]
+        nodes = list(first_ko.bracket.nodes.order_by("position"))
+        self.assertEqual(len(nodes), 5)
+        self.assertEqual(nodes[0].home_source["group_slug"], "cuadrangular-a")
+        self.assertEqual(nodes[0].home_source["rank"], 1)
+        self.assertEqual(nodes[0].away_source["group_slug"], "cuadrangular-b")
+        self.assertEqual(nodes[0].away_source["rank"], 2)
+        self.assertTrue(tournament.phases.filter(slug="final").exists())
+
+        two = Tournament.objects.create(
+            name="Playoffs 2",
+            slug="playoffs-dos-grupos",
+            sport_type="football",
+            organization=self.org,
+            posted_by=self.user,
+            start_date="2026-07-01",
+            end_date="2026-08-01",
+        )
+        apply_format_template(two, "multi_quadrangular_knockout", group_count=2)
+        semis = two.phases.get(slug="semifinales")
+        semi_nodes = list(semis.bracket.nodes.order_by("position"))
+        self.assertEqual(semi_nodes[0].away_source["group_slug"], "cuadrangular-b")
+        self.assertEqual(semi_nodes[1].home_source["group_slug"], "cuadrangular-b")
+        self.assertTrue(two.phases.filter(slug="final").exists())
