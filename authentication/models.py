@@ -98,6 +98,9 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     # Metadatos
     last_login_ip = models.GenericIPAddressField(null=True, blank=True)
     date_joined = models.DateTimeField(default=timezone.now)
+    accepted_terms = models.BooleanField(default=False)
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
+    terms_version = models.CharField(max_length=32, blank=True, default="")
 
     # Campos para JWT tracking
     jti = models.CharField(max_length=255, blank=True, db_index=True)

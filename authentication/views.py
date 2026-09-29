@@ -12,6 +12,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.core.cache import cache
 from django.db.models import Q
+from django.utils import timezone
 from .serializers import (
     CustomTokenObtainPairSerializer,
     UserRegistrationSerializer,
@@ -24,6 +25,7 @@ from .serializers import (
 )
 from .models import LoginAttempt
 from .emails import send_password_reset_email
+from .terms import CURRENT_TERMS_VERSION
 
 User = get_user_model()
 
@@ -90,6 +92,24 @@ class RegisterView(generics.CreateAPIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class AcceptTermsView(generics.GenericAPIView):
+    """Registra la versión vigente si el usuario aún no la aceptó."""
+
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        user = request.user
+        if not user.accepted_terms or user.terms_version != CURRENT_TERMS_VERSION:
+            user.accepted_terms = True
+            user.terms_accepted_at = timezone.now()
+            user.terms_version = CURRENT_TERMS_VERSION
+            user.save(
+                update_fields=["accepted_terms", "terms_accepted_at", "terms_version"]
+            )
+        return Response(auth_user_payload(user))
 
 
 @api_view(["GET"])
