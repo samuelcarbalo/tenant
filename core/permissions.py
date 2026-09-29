@@ -124,19 +124,59 @@ def user_is_protected_platform_admin(user) -> bool:
     return bool(getattr(user, "is_superuser", False))
 
 
+# Alias aceptados de Super Admin Root (Nivel 1) y Delegado (Nivel 2).
+PLATFORM_SUPER_ADMIN_ROLES = frozenset(
+    {
+        "SUPER_ADMIN",
+        "SUPER_ADMIN_L1",
+        "SUPER_ADMIN_L2",
+        "SUPER_ADMIN_LEVEL_1",
+        "SUPER_ADMIN_LEVEL_2",
+    }
+)
+
+
+def _role_token(value) -> str:
+    return str(value or "").strip().upper()
+
+
+def user_has_platform_super_admin_role(user) -> bool:
+    """role o hierarchy_role es Super Admin Nivel 1 o Nivel 2."""
+    if not user:
+        return False
+    role = _role_token(getattr(user, "role", None))
+    hierarchy = _role_token(getattr(user, "hierarchy_role", None))
+    return role in PLATFORM_SUPER_ADMIN_ROLES or hierarchy in PLATFORM_SUPER_ADMIN_ROLES
+
+
+def user_is_module_super_admin(user) -> bool:
+    """
+    Super Admin Nivel 1 o Nivel 2: CRUD completo de módulos de contenido
+    (Deportes, anuncios, eventos, empleo, bienes raíces).
+    No incluye credenciales de pago ni la configuración global de plataforma.
+    """
+    if not user:
+        return False
+    if getattr(user, "is_superuser", False):
+        return True
+    if user_admin_level(user) in (1, 2):
+        return True
+    if user_is_super_admin_l1(user) or user_is_super_admin_l2(user):
+        return True
+    return user_has_platform_super_admin_role(user)
+
+
 def user_is_platform_elevated(user) -> bool:
-    """Superuser / staff / role admin de plataforma (sin org o cross-tenant)."""
+    """Superuser / staff / Super Admin L1-L2 / role admin de plataforma."""
     if not user or not getattr(user, "is_authenticated", False):
         return False
-    return bool(
-        user.is_superuser
-        or user.is_staff
-        or getattr(user, "role", None) == "admin"
-    )
+    if user_is_module_super_admin(user):
+        return True
+    return bool(user.is_staff or getattr(user, "role", None) == "admin")
 
 
 def user_can_manage_content(user) -> bool:
-    """Puede crear/editar contenido de módulos (manager de org o admin de plataforma)."""
+    """Puede crear/editar contenido de módulos (manager de org o Super Admin L1/L2)."""
     if not user or not getattr(user, "is_authenticated", False):
         return False
     if user_is_platform_elevated(user):
@@ -309,7 +349,7 @@ class IsSuperUser(permissions.BasePermission):
 class IsSportsSuperAdminOrOrgMember(permissions.BasePermission):
     """
     Permiso para el módulo de Deportes/Torneos.
-    - Super Admin (is_superuser o admin_level == 1): acceso total a cualquier método HTTP.
+    - Super Admin Nivel 1 o Nivel 2: CRUD completo en cualquier método HTTP.
     - Resto de usuarios autenticados: requieren pertenecer a la organización del tenant.
     """
 
@@ -342,25 +382,22 @@ class IsSportsSuperAdminOrOrgMember(permissions.BasePermission):
 
 
 def _is_sports_super_admin(user) -> bool:
-    """Retorna True si el usuario es Super Admin con acceso total al módulo de Deportes."""
-    if not user:
-        return False
-    if getattr(user, "is_superuser", False):
-        return True
-    if user_admin_level(user) == 1:
-        return True
-    if getattr(user, "role", None) in ("SUPER_ADMIN", "super_admin"):
-        return True
-    return False
+    """Super Admin Nivel 1 o Nivel 2: acceso total al módulo de Deportes."""
+    return user_is_module_super_admin(user)
 
 
 class IsMercadoPagoConfigAdmin(permissions.BasePermission):
-    """IsAdminUser (is_staff) o IsSuperUser (is_superuser) — credenciales Mercado Pago."""
+    """
+    Lectura: staff o superusuario.
+    Escritura de credenciales: solo Super Admin Root (Nivel 1).
+    """
 
-    message = "Se requieren permisos de administrador (staff o superusuario)."
+    message = LEVEL1_FORBIDDEN_MESSAGE
 
     def has_permission(self, request, view):
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated:
             return False
-        return bool(user.is_staff or user.is_superuser)
+        if request.method in permissions.SAFE_METHODS:
+            return bool(user.is_staff or user.is_superuser or user_is_super_admin_l1(user))
+        return user_is_super_admin_l1(user)

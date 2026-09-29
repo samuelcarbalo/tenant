@@ -189,7 +189,7 @@ class MercadoPagoAdminConfigApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data["is_production"])
 
-    def test_admin_config_patch_for_staff_with_bearer(self):
+    def test_admin_config_patch_forbidden_for_staff_without_level_1(self):
         staff = User.objects.create_user(
             email="staff-patch@platform.com",
             username="staffpatch",
@@ -205,8 +205,20 @@ class MercadoPagoAdminConfigApiTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["public_key_test"], "TEST-BEARER-PK")
+        self.assertEqual(response.status_code, 403)
+        self.cfg.refresh_from_db()
+        self.assertNotEqual(self.cfg.public_key_test, "TEST-BEARER-PK")
+
+    def test_admin_config_patch_forbidden_for_level_2(self):
+        self.client.force_authenticate(self.l2)
+        response = self.client.patch(
+            "/api/v1/payments/admin-config/",
+            {"public_key_test": "L2-SHOULD-NOT-WRITE"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.cfg.refresh_from_db()
+        self.assertNotEqual(self.cfg.public_key_test, "L2-SHOULD-NOT-WRITE")
 
     def test_admin_config_get_auto_creates_singleton(self):
         MercadoPagoConfig.objects.all().delete()
