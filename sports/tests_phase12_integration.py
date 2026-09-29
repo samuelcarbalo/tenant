@@ -71,6 +71,8 @@ class Phase12IntegrationTests(TestCase):
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(data["structure_mode"], "structured")
+        self.assertEqual(data["format_label"], "Cuadrangular (1 día)")
+        self.assertFalse(data["has_second_group_phase"])
         self.assertEqual(len(data["phases"]), 1)
         self.assertEqual(len(data["phases"][0]["groups"]), 1)
         self.assertEqual(data["phases"][0]["groups"][0]["teams_count"], 4)
@@ -377,6 +379,49 @@ class Phase12IntegrationTests(TestCase):
             [str(team_id) for team_id in group_a.memberships.values_list("team_id", flat=True)],
             [quals[0]["team_id"], quals[1]["team_id"]],
         )
+
+    def test_configure_second_phase_inserts_groups_before_playoffs(self):
+        tournament = Tournament.objects.create(
+            name="Sin segunda",
+            slug="sin-segunda",
+            sport_type="football",
+            organization=self.org,
+            posted_by=self.user,
+            start_date="2026-09-01",
+            end_date="2026-10-01",
+        )
+        apply_format_template(tournament, "multi_quadrangular_knockout", group_count=2)
+        self.assertTrue(tournament.phases.filter(slug="semifinales").exists())
+        self.user.admin_level = 2
+        self.user.is_staff = True
+        self.user.role = "admin"
+        self.user.save(update_fields=["admin_level", "is_staff", "role"])
+
+        res = self.client.post(
+            f"/api/v1/sports/tournaments/{tournament.slug}/configure-second-phase/",
+            {
+                "second_phase_groups_count": 2,
+                "first_phase_qualified_per_group": 2,
+                "second_phase_qualified_per_group": 2,
+                "second_phase_assignment_method": "RANDOM",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        data = res.json()
+        self.assertEqual(data["format_template"], "multi_quadrangular_knockout")
+        self.assertEqual(data["format_label"], "Fase de grupos + playoffs")
+        self.assertTrue(data["has_second_group_phase"])
+        self.assertEqual(
+            [phase["name"] for phase in data["phases"][:2]],
+            ["Fase de grupos", "Segunda fase de grupos"],
+        )
+        self.assertTrue(any(phase["phase_type"] == "knockout" for phase in data["phases"]))
+        tournament.refresh_from_db()
+        first_ko = tournament.phases.filter(phase_type="knockout").order_by("order").first()
+        node = first_ko.bracket.nodes.order_by("position").first()
+        self.assertEqual(node.home_source["group_slug"], "segunda-a")
+        self.assertEqual(node.away_source["group_slug"], "segunda-b")
 
     def test_public_team_payload_omits_coach_phone(self):
         team = self.teams[0]

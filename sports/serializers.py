@@ -691,7 +691,14 @@ class TournamentPhaseSerializer(serializers.ModelSerializer):
 
 class TournamentStructureSerializer(serializers.Serializer):
     structure_mode = serializers.CharField()
-    format_template = serializers.CharField()
+    format_template = serializers.CharField(allow_blank=True)
+    format_label = serializers.CharField()
+    supports_second_group_phase = serializers.BooleanField()
+    has_second_group_phase = serializers.BooleanField()
+    first_phase_qualified_per_group = serializers.IntegerField()
+    second_phase_groups_count = serializers.IntegerField(allow_null=True)
+    second_phase_qualified_per_group = serializers.IntegerField(allow_null=True)
+    second_phase_assignment_method = serializers.CharField(allow_blank=True)
     phases = TournamentPhaseSerializer(many=True)
 
 

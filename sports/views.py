@@ -63,10 +63,11 @@ from .serializers import (
     PlayerSuspensionSerializer,
 )
 from .scoring import MatchResultService, StandingsService, get_scoring_config
-from .formats.templates import list_templates
+from .formats.templates import get_template, list_templates
 from .services.structure import (
     apply_format_template,
     assign_teams_to_group,
+    configure_second_group_phase,
     generate_round_robin_fixtures,
     generate_second_group_phase,
     second_phase_preview,
@@ -88,6 +89,24 @@ from core.permissions import (
 from sports.access import SportsSubscriptionGuardMixin
 
 logger = logging.getLogger(__name__)
+
+
+def _tournament_structure_payload(tournament, phases=None):
+    template = get_template(tournament.format_template) or {}
+    if phases is None:
+        phases = tournament.phases.order_by("order")
+    return {
+        "structure_mode": tournament.structure_mode,
+        "format_template": tournament.format_template or "",
+        "format_label": template.get("label") or "Sin formato",
+        "supports_second_group_phase": bool(template.get("supports_second_group_phase")),
+        "has_second_group_phase": bool(tournament.has_second_group_phase),
+        "first_phase_qualified_per_group": tournament.first_phase_qualified_per_group or 2,
+        "second_phase_groups_count": tournament.second_phase_groups_count,
+        "second_phase_qualified_per_group": tournament.second_phase_qualified_per_group,
+        "second_phase_assignment_method": tournament.second_phase_assignment_method or "",
+        "phases": TournamentPhaseSerializer(phases, many=True).data,
+    }
 
 
 class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
@@ -326,12 +345,7 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
             .all()
             .order_by("order")
         )
-        data = {
-            "structure_mode": tournament.structure_mode,
-            "format_template": tournament.format_template,
-            "phases": TournamentPhaseSerializer(phases, many=True).data,
-        }
-        return Response(data)
+        return Response(_tournament_structure_payload(tournament, phases))
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def assign_group_teams(self, request, slug=None):
@@ -452,6 +466,23 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
+
+    @action(detail=True, methods=["post"], url_path="configure-second-phase")
+    def configure_second_phase(self, request, slug=None):
+        """Habilita o rearma la segunda fase de grupos antes de los playoffs."""
+        tournament = self.get_object()
+        body = request.data if isinstance(request.data, dict) else {}
+        try:
+            configure_second_group_phase(
+                tournament,
+                groups_count=body.get("second_phase_groups_count"),
+                qualified_per_group=body.get("first_phase_qualified_per_group"),
+                assignment_method=body.get("second_phase_assignment_method"),
+                playoff_qualifiers=body.get("second_phase_qualified_per_group", 2),
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_tournament_structure_payload(tournament))
 
     @action(detail=True, methods=["get", "post"], url_path="generate-second-phase")
     def generate_second_phase(self, request, slug=None):
