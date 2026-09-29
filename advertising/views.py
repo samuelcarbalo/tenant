@@ -25,10 +25,12 @@ from .serializers import (
     TournamentSponsorshipSerializer,
 )
 from .services import (
+    MAX_SPONSORS_PER_TOURNAMENT,
+    SPONSORSHIP_SOLD_OUT_MESSAGE,
     build_sponsorship_availability,
     create_classified_campaign,
     create_tournament_sponsorship,
-    get_active_sponsorship,
+    get_active_sponsorships,
     record_campaign_impression,
 )
 
@@ -97,6 +99,12 @@ class TournamentSponsorshipViewSet(viewsets.ReadOnlyModelViewSet):
         data = serializer.validated_data
         plan = SPONSORSHIP_PLANS[data["plan"]]
         user = request.user
+
+        if (
+            get_active_sponsorships(data["tournament"].id).count()
+            >= MAX_SPONSORS_PER_TOURNAMENT
+        ):
+            raise ValidationError({"detail": SPONSORSHIP_SOLD_OUT_MESSAGE})
 
         with transaction.atomic():
             fresh_user = User.objects.select_for_update().get(id=user.id)

@@ -1991,7 +1991,7 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["title", "description"]
     ordering_fields = ["display_order", "created_at", "start_date"]
-    ordering = ["position", "display_order"]
+    ordering = ["position", "created_at"]
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
@@ -2083,7 +2083,11 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
 
     @action(detail=False, methods=["get"], permission_classes=[AllowAny])
     def by_position(self, request):
-        from advertising.services import expire_stale_sponsorships, get_active_sponsorship
+        from advertising.services import (
+            MAX_SPONSORS_PER_TOURNAMENT,
+            expire_stale_sponsorships,
+            get_active_sponsorships,
+        )
         from django.conf import settings
 
         position = request.query_params.get("position")
@@ -2102,14 +2106,18 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
             start_date__lte=today,
         ).filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
 
+        limit = 1
         if tournament_id:
             expire_stale_sponsorships()
-            sponsorship = get_active_sponsorship(tournament_id)
-            if sponsorship:
+            sponsorship_ids = list(
+                get_active_sponsorships(tournament_id).values_list("id", flat=True)
+            )
+            if sponsorship_ids:
                 banners = banners.filter(
-                    sponsorship_id=sponsorship.id,
+                    sponsorship_id__in=sponsorship_ids,
                     tournament_id=tournament_id,
                 )
+                limit = MAX_SPONSORS_PER_TOURNAMENT
             elif settings.TOURNAMENT_OWNER_BANNERS_ENABLED:
                 banners = banners.filter(
                     tournament_id=tournament_id,
@@ -2130,9 +2138,7 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
         if object_id:
             banners = banners.filter(campaign__object_id=object_id)
 
-        banners = banners.order_by("display_order")[:1]
-
-        banner_list = list(banners)
+        banner_list = list(banners.order_by("created_at", "display_order")[:limit])
         if banner_list:
             from advertising.services import record_campaign_impression
 
@@ -2140,9 +2146,9 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
             if banner.campaign_id and viewer_hash:
                 record_campaign_impression(banner.campaign, viewer_hash[:64])
             else:
-                AdvertisementBanner.objects.filter(id=banner.id).update(
-                    impressions=F("impressions") + 1
-                )
+                AdvertisementBanner.objects.filter(
+                    id__in=[item.id for item in banner_list]
+                ).update(impressions=F("impressions") + 1)
 
         serializer = AdvertisementBannerSerializer(banner_list, many=True)
         return Response(serializer.data)
@@ -2160,7 +2166,7 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
                 start_date__lte=today,
             )
             .filter(Q(end_date__isnull=True) | Q(end_date__gte=today))
-            .order_by("position", "display_order")
+            .order_by("position", "created_at")
         )
 
         from django.conf import settings

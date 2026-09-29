@@ -12,6 +12,9 @@ from sports.models import AdvertisementBanner, Tournament
 
 from .models import ClassifiedAdCampaign, TournamentSponsorship
 
+MAX_SPONSORS_PER_TOURNAMENT = 3
+SPONSORSHIP_SOLD_OUT_MESSAGE = "Cupo publicitario agotado para este mes"
+
 
 def expire_stale_sponsorships():
     today = timezone.now().date()
@@ -20,7 +23,7 @@ def expire_stale_sponsorships():
     ).update(status="expired")
 
 
-def get_active_sponsorship(tournament_id) -> TournamentSponsorship | None:
+def get_active_sponsorships(tournament_id):
     expire_stale_sponsorships()
     today = timezone.now().date()
     return (
@@ -31,8 +34,27 @@ def get_active_sponsorship(tournament_id) -> TournamentSponsorship | None:
             end_date__gte=today,
         )
         .select_related("tournament", "posted_by")
-        .first()
+        .order_by("created_at")
     )
+
+
+def get_active_sponsorship(tournament_id) -> TournamentSponsorship | None:
+    return get_active_sponsorships(tournament_id).first()
+
+
+def _sponsorship_payload(sponsorship: TournamentSponsorship) -> dict:
+    return {
+        "id": str(sponsorship.id),
+        "title": sponsorship.title,
+        "plan": sponsorship.plan,
+        "plan_label": sponsorship.get_plan_display(),
+        "start_date": sponsorship.start_date.isoformat(),
+        "end_date": sponsorship.end_date.isoformat(),
+        "days_remaining": sponsorship.days_remaining,
+        "image": sponsorship.image,
+        "link_url": sponsorship.link_url,
+        "created_at": sponsorship.created_at.isoformat(),
+    }
 
 
 def create_sponsorship_banners(sponsorship: TournamentSponsorship):
@@ -59,40 +81,33 @@ def deactivate_sponsorship_banners(sponsorship: TournamentSponsorship):
 
 
 def build_sponsorship_availability(tournament: Tournament) -> dict:
-    active = get_active_sponsorship(tournament.id)
-    if active:
-        return {
-            "available": False,
-            "tournament_id": str(tournament.id),
-            "tournament_name": tournament.name,
-            "tournament_status": tournament.status,
-            "active_sponsorship": {
-                "id": str(active.id),
-                "title": active.title,
-                "plan": active.plan,
-                "plan_label": active.get_plan_display(),
-                "start_date": active.start_date.isoformat(),
-                "end_date": active.end_date.isoformat(),
-                "days_remaining": active.days_remaining,
-                "image": active.image,
-                "link_url": active.link_url,
-            },
-            "days_remaining": active.days_remaining,
-            "message": (
-                f"Patrocinio activo hasta {active.end_date.strftime('%d/%m/%Y')}. "
-                f"Quedan {active.days_remaining} día(s). "
-                "¡Sé el siguiente patrocinador cuando expire!"
-            ),
-        }
+    active = list(get_active_sponsorships(tournament.id))
+    used = len(active)
+    remaining = max(0, MAX_SPONSORS_PER_TOURNAMENT - used)
+    first = active[0] if active else None
+
+    if not active:
+        message = "Este torneo no tiene patrocinadores. ¡Oportunidad disponible!"
+    elif remaining:
+        message = (
+            f"Disponibles {remaining} de {MAX_SPONSORS_PER_TOURNAMENT} "
+            "cupos publicitarios este mes."
+        )
+    else:
+        message = SPONSORSHIP_SOLD_OUT_MESSAGE
 
     return {
-        "available": True,
+        "available": remaining > 0,
         "tournament_id": str(tournament.id),
         "tournament_name": tournament.name,
         "tournament_status": tournament.status,
-        "active_sponsorship": None,
-        "days_remaining": 0,
-        "message": "Este torneo no tiene patrocinador exclusivo. ¡Oportunidad disponible!",
+        "slots_total": MAX_SPONSORS_PER_TOURNAMENT,
+        "slots_used": used,
+        "slots_available": remaining,
+        "active_sponsorship": _sponsorship_payload(first) if first else None,
+        "active_sponsorships": [_sponsorship_payload(item) for item in active],
+        "days_remaining": first.days_remaining if first else 0,
+        "message": message,
     }
 
 
@@ -110,11 +125,10 @@ def create_tournament_sponsorship(
     if not plan:
         raise ValueError("Plan de patrocinio inválido.")
 
-    if get_active_sponsorship(tournament.id):
-        raise ValueError(
-            "Este torneo ya tiene un patrocinio exclusivo activo. "
-            "Espera a que expire o elige otro torneo."
-        )
+    # Serializa compras simultáneas del mismo torneo para no pasar del cupo.
+    Tournament.objects.select_for_update().filter(pk=tournament.pk).first()
+    if get_active_sponsorships(tournament.id).count() >= MAX_SPONSORS_PER_TOURNAMENT:
+        raise ValueError(SPONSORSHIP_SOLD_OUT_MESSAGE)
 
     today = timezone.now().date()
     end = sponsorship_end_date(today, plan_id)
