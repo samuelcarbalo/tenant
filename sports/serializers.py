@@ -1,6 +1,8 @@
 from datetime import timedelta
 from django.utils import timezone
 from rest_framework import serializers
+
+from core.permissions import user_is_module_super_admin
 from .models import (
     Tournament,
     TournamentPhase,
@@ -219,6 +221,26 @@ class TournamentDetailSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
+def user_can_view_coach_phone(user, team) -> bool:
+    """Teléfono del cuerpo técnico: creador del equipo, organizador o super admin."""
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    if user_is_module_super_admin(user):
+        return True
+    if getattr(team, "posted_by_id", None) == user.id:
+        return True
+    tournament = getattr(team, "tournament", None)
+    return bool(tournament and tournament.posted_by_id == user.id)
+
+
+def _hide_coach_phone(serializer, instance, data):
+    request = serializer.context.get("request")
+    user = getattr(request, "user", None) if request else None
+    if not user_can_view_coach_phone(user, instance):
+        data.pop("coach_phone", None)
+    return data
+
+
 class TeamListSerializer(serializers.ModelSerializer):
     """Serializer para listado de equipos"""
 
@@ -269,6 +291,9 @@ class TeamListSerializer(serializers.ModelSerializer):
                 return idx
         return None
 
+    def to_representation(self, instance):
+        return _hide_coach_phone(self, instance, super().to_representation(instance))
+
 
 class TeamDetailSerializer(serializers.ModelSerializer):
     """Serializer detallado de equipo"""
@@ -284,6 +309,9 @@ class TeamDetailSerializer(serializers.ModelSerializer):
         """Lista de jugadores activos"""
         players = obj.players.filter(is_active=True)
         return PlayerListSerializer(players, many=True).data
+
+    def to_representation(self, instance):
+        return _hide_coach_phone(self, instance, super().to_representation(instance))
 
 
 class TeamCreateUpdateSerializer(serializers.ModelSerializer):
@@ -311,6 +339,9 @@ class TeamCreateUpdateSerializer(serializers.ModelSerializer):
             "organization",
         ]
         read_only_fields = ["posted_by", "organization"]
+
+    def to_representation(self, instance):
+        return _hide_coach_phone(self, instance, super().to_representation(instance))
 
 
 class PlayerListSerializer(serializers.ModelSerializer):
