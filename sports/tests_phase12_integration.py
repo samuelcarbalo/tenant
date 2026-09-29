@@ -377,3 +377,40 @@ class Phase12IntegrationTests(TestCase):
             [str(team_id) for team_id in group_a.memberships.values_list("team_id", flat=True)],
             [quals[0]["team_id"], quals[1]["team_id"]],
         )
+
+    def test_public_team_payload_omits_coach_phone(self):
+        team = self.teams[0]
+        team.coach_phone = "3001234567"
+        team.save(update_fields=["coach_phone"])
+
+        anon = APIClient()
+        detail = anon.get(f"/api/v1/sports/teams/{team.slug}/")
+        self.assertEqual(detail.status_code, 200, detail.content)
+        self.assertNotIn("coach_phone", detail.json())
+
+        listing = anon.get(
+            "/api/v1/sports/teams/",
+            {"tournament": self.tournament.slug},
+        )
+        self.assertEqual(listing.status_code, 200, listing.content)
+        payload = listing.json()
+        rows = payload["results"] if isinstance(payload, dict) else payload
+        self.assertTrue(rows)
+        self.assertTrue(all("coach_phone" not in row for row in rows))
+
+        outsider = User.objects.create_user(
+            email="visitante@test.com",
+            username="visitante",
+            password="SecurePass123!",
+            organization=self.org,
+            role="user",
+        )
+        outsider_client = APIClient()
+        outsider_client.force_authenticate(user=outsider)
+        hidden = outsider_client.get(f"/api/v1/sports/teams/{team.slug}/")
+        self.assertEqual(hidden.status_code, 200, hidden.content)
+        self.assertNotIn("coach_phone", hidden.json())
+
+        owner = self.client.get(f"/api/v1/sports/teams/{team.slug}/")
+        self.assertEqual(owner.status_code, 200, owner.content)
+        self.assertEqual(owner.json()["coach_phone"], "3001234567")
