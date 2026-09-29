@@ -113,7 +113,8 @@ FORMAT_TEMPLATES = {
     "multi_quadrangular_knockout": {
         "id": "multi_quadrangular_knockout",
         "label": "Fase de grupos + playoffs",
-        "description": "Elige cuántos grupos de 4 quieres (A, B, C…). Clasifican 2 por grupo. La eliminatoria se arma según esa cantidad: el 1.º de un grupo enfrenta al 2.º del siguiente, y luego se juega hasta la final.",
+        "description": "Elige cuántos grupos de 4 quieres (A, B, C…). Por defecto clasifican 2 por grupo a la eliminatoria. Puedes agregar una segunda fase de grupos (1 o 2) antes de los playoffs.",
+        "supports_second_group_phase": True,
         "sport_types": ["softball", "football"],
         "structure_mode": "structured",
         "grouping": "multi_group",
