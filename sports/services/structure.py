@@ -24,7 +24,16 @@ def apply_format_template(tournament: Tournament, template_id: str, group_count:
 
     tournament.structure_mode = template.get("structure_mode", "structured")
     tournament.format_template = template_id
-    if template.get("default_max_teams"):
+    auto_phases = [p for p in template.get("phases", []) if p.get("groups_auto")]
+    if auto_phases:
+        teams_per = auto_phases[0].get("config", {}).get("teams_per_group", 4)
+        requested = max(1, int(group_count or 1))
+        if template.get("dynamic_playoff"):
+            group_count = min(16, max(2, requested))
+        else:
+            group_count = min(16, requested)
+        tournament.max_teams = group_count * teams_per
+    elif template.get("default_max_teams"):
         tournament.max_teams = template["default_max_teams"]
     tournament.save(
         update_fields=["structure_mode", "format_template", "max_teams"]
@@ -48,7 +57,7 @@ def apply_format_template(tournament: Tournament, template_id: str, group_count:
                 letter = chr(ord("A") + i)
                 CompetitionGroup.objects.create(
                     phase=phase,
-                    name=f"Cuadrangular {letter}",
+                    name=f"Grupo {letter}",
                     slug=slugify(f"cuadrangular-{letter}"),
                     order=i + 1,
                     max_teams=teams_per,
@@ -65,6 +74,94 @@ def apply_format_template(tournament: Tournament, template_id: str, group_count:
 
         if phase_def.get("phase_type") == "knockout" or phase_def.get("bracket"):
             _create_bracket_for_phase(phase, phase_def.get("bracket", {}))
+
+    if template.get("dynamic_playoff"):
+        _append_dynamic_playoff(tournament, group_count)
+
+
+def _group_letter(index: int) -> str:
+    return chr(ord("a") + index)
+
+
+def _playoff_round_meta(match_count: int):
+    named = {
+        1: ("final", "final", "Final"),
+        2: ("semifinal", "semifinales", "Semifinales"),
+        4: ("quarterfinal", "cuartos", "Cuartos de final"),
+        8: ("round_of_16", "octavos", "Octavos de final"),
+        16: ("round_of_32", "dieciseisavos", "Dieciseisavos de final"),
+    }
+    if match_count in named:
+        return named[match_count]
+    return (f"round_{match_count}", f"ronda-{match_count}", f"Ronda de {match_count}")
+
+
+def _cross_group_pairings(group_count: int):
+    """1.º del grupo i contra 2.º del grupo siguiente."""
+    pairings = []
+    for i in range(group_count):
+        home = _group_letter(i)
+        away = _group_letter((i + 1) % group_count)
+        pairings.append(
+            (
+                {"type": "group_rank", "group_slug": f"cuadrangular-{home}", "rank": 1},
+                {"type": "group_rank", "group_slug": f"cuadrangular-{away}", "rank": 2},
+            )
+        )
+    return pairings
+
+
+def _next_round_pairings(previous_round_code: str, node_count: int):
+    pairings = []
+    index = 1
+    while index <= node_count:
+        home = {"type": "bracket_winner", "round": previous_round_code, "position": index}
+        if index + 1 <= node_count:
+            away = {
+                "type": "bracket_winner",
+                "round": previous_round_code,
+                "position": index + 1,
+            }
+            index += 2
+        else:
+            away = {"type": "bye"}
+            index += 1
+        pairings.append((home, away))
+    return pairings
+
+
+def build_playoff_rounds(group_count: int):
+    rounds = []
+    current = _cross_group_pairings(group_count)
+    while current:
+        code, slug, name = _playoff_round_meta(len(current))
+        rounds.append({"code": code, "slug": slug, "name": name, "pairings": current})
+        if len(current) == 1:
+            break
+        current = _next_round_pairings(code, len(current))
+    return rounds
+
+
+def _append_dynamic_playoff(tournament: Tournament, group_count: int):
+    for offset, round_def in enumerate(build_playoff_rounds(group_count), start=2):
+        phase = TournamentPhase.objects.create(
+            tournament=tournament,
+            name=round_def["name"],
+            slug=round_def["slug"],
+            phase_type="knockout",
+            order=offset,
+            status="pending",
+            config={"rounds": [round_def["code"]]},
+        )
+        bracket = Bracket.objects.create(phase=phase, name=round_def["name"])
+        for position, (home, away) in enumerate(round_def["pairings"], start=1):
+            BracketNode.objects.create(
+                bracket=bracket,
+                round=round_def["code"],
+                position=position,
+                home_source=home,
+                away_source=away,
+            )
 
 
 def _create_bracket_for_phase(phase: TournamentPhase, bracket_def: dict):

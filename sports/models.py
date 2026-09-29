@@ -223,6 +223,8 @@ class BracketNode(TimeStampedModel):
     """Nodo del bracket (semifinal, final, etc.)."""
 
     ROUND_CHOICES = [
+        ("round_of_32", "Dieciseisavos de final"),
+        ("round_of_16", "Octavos de final"),
         ("quarterfinal", "Cuartos de final"),
         ("semifinal", "Semifinal"),
         ("final", "Final"),
