@@ -3,6 +3,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     CustomTokenObtainPairView,
     RegisterView,
+    AcceptTermsView,
     LogoutView,
     UserMeView,
     PasswordChangeView,
@@ -41,6 +42,7 @@ urlpatterns = [
 
     # Registration
     path('register/', csrf_exempt(RegisterView.as_view()), name='register'),
+    path('accept-terms/', AcceptTermsView.as_view(), name='accept_terms'),
 
     # User Management
     path('me/', UserMeView.as_view(), name='user_me'),

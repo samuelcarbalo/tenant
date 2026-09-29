@@ -4,6 +4,9 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.core.cache import cache
+from django.utils import timezone
+
+from .terms import CURRENT_TERMS_VERSION
 
 from organizations.models import Organization
 from profiles.models import Profile
@@ -39,6 +42,9 @@ def auth_user_payload(user) -> dict:
         "is_unlimited_credits": bool(user.is_unlimited_credits),
         "sports_module_active": bool(user.sports_module_active),
         "sports_module_expires_at": user.sports_module_expires_at,
+        "accepted_terms": bool(user.accepted_terms),
+        "terms_accepted_at": user.terms_accepted_at,
+        "terms_version": user.terms_version or "",
         "organization": {
             "id": str(user.organization.id),
             "name": user.organization.name,
@@ -104,6 +110,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True)
+    accepted_terms = serializers.BooleanField(write_only=True)
     organization_name = serializers.CharField(required=False, allow_blank=True)
     organization_slug = serializers.CharField(required=False, allow_blank=True)
     company_name = serializers.CharField(required=False, allow_blank=True)
@@ -125,7 +132,15 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             "organization_slug",
             "company_name",
             "user_type",
+            "accepted_terms",
         ]
+
+    def validate_accepted_terms(self, value):
+        if value is not True:
+            raise serializers.ValidationError(
+                "Debes aceptar los Términos y Condiciones y la Política de Privacidad."
+            )
+        return value
 
     def validate(self, data):
         if data["password"] != data["password_confirm"]:
@@ -158,6 +173,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data.pop("password_confirm")
+        validated_data.pop("accepted_terms", None)
         org_name = validated_data.pop("organization_name", None)
         org_slug = validated_data.pop("organization_slug", None)
         existing_org = validated_data.pop("existing_organization", None)
@@ -197,6 +213,12 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             user = User.objects.create_user(
                 organization=organization,
                 **validated_data,
+            )
+            user.accepted_terms = True
+            user.terms_accepted_at = timezone.now()
+            user.terms_version = CURRENT_TERMS_VERSION
+            user.save(
+                update_fields=["accepted_terms", "terms_accepted_at", "terms_version"]
             )
 
             # Crear perfil
