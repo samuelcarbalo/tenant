@@ -96,6 +96,11 @@ class TournamentCreateSerializer(serializers.ModelSerializer):
             "lineup_size",
             "regulation_innings",
             "mercy_rule_enabled",
+            "has_second_group_phase",
+            "first_phase_qualified_per_group",
+            "second_phase_groups_count",
+            "second_phase_qualified_per_group",
+            "second_phase_assignment_method",
             "status",
             "is_active",
         ]
@@ -111,6 +116,52 @@ class TournamentCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"lineup_size": "10 titulares solo aplica a softbol (con bateador designado)."}
             )
+        if data.get("has_second_group_phase"):
+            if data.get("format_template") != "multi_quadrangular_knockout":
+                raise serializers.ValidationError(
+                    {
+                        "has_second_group_phase": (
+                            "La segunda fase de grupos solo aplica al formato "
+                            "Fase de grupos + playoffs."
+                        )
+                    }
+                )
+            groups = data.get("second_phase_groups_count")
+            if groups not in (1, 2):
+                raise serializers.ValidationError(
+                    {"second_phase_groups_count": "Elige 1 o 2 grupos para la segunda fase."}
+                )
+            first_n = data.get("first_phase_qualified_per_group") or 2
+            if first_n < 1 or first_n > 4:
+                raise serializers.ValidationError(
+                    {
+                        "first_phase_qualified_per_group": (
+                            "Indica entre 1 y 4 clasificados por grupo de la primera fase."
+                        )
+                    }
+                )
+            second_n = data.get("second_phase_qualified_per_group")
+            if not second_n or second_n < 1:
+                raise serializers.ValidationError(
+                    {
+                        "second_phase_qualified_per_group": (
+                            "Indica cuántos equipos pasan de cada grupo de la segunda fase."
+                        )
+                    }
+                )
+            if groups * second_n < 2:
+                raise serializers.ValidationError(
+                    {
+                        "second_phase_qualified_per_group": (
+                            "Los playoffs necesitan al menos 2 clasificados en total."
+                        )
+                    }
+                )
+            method = data.get("second_phase_assignment_method") or "RANDOM"
+            if method not in ("RANDOM", "MANUAL"):
+                raise serializers.ValidationError(
+                    {"second_phase_assignment_method": "Elige asignación aleatoria o manual."}
+                )
         return data
 
 

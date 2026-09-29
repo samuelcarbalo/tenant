@@ -291,3 +291,89 @@ class Phase12IntegrationTests(TestCase):
         self.assertEqual(semi_nodes[0].away_source["group_slug"], "cuadrangular-b")
         self.assertEqual(semi_nodes[1].home_source["group_slug"], "cuadrangular-b")
         self.assertTrue(two.phases.filter(slug="final").exists())
+
+    def _tournament_with_second_phase(self, slug, method="RANDOM", groups=2, second_out=2):
+        tournament = Tournament.objects.create(
+            name=slug,
+            slug=slug,
+            sport_type="football",
+            organization=self.org,
+            posted_by=self.user,
+            start_date="2026-09-01",
+            end_date="2026-10-01",
+            has_second_group_phase=True,
+            first_phase_qualified_per_group=2,
+            second_phase_groups_count=groups,
+            second_phase_qualified_per_group=second_out,
+            second_phase_assignment_method=method,
+        )
+        apply_format_template(tournament, "multi_quadrangular_knockout", group_count=2)
+        teams = []
+        for i in range(1, 9):
+            teams.append(
+                Team.objects.create(
+                    name=f"Equipo {i:02d}",
+                    slug=f"{slug}-e{i}",
+                    abbreviation=f"E{i}",
+                    tournament=tournament,
+                    organization=self.org,
+                    posted_by=self.user,
+                )
+            )
+        phase = tournament.phases.get(slug="cuadrangulares")
+        groups_qs = list(phase.groups.order_by("order"))
+        assign_teams_to_group(groups_qs[0], [t.id for t in teams[:4]])
+        assign_teams_to_group(groups_qs[1], [t.id for t in teams[4:]])
+        self.user.admin_level = 2
+        self.user.is_staff = True
+        self.user.role = "admin"
+        self.user.save(update_fields=["admin_level", "is_staff", "role"])
+        return tournament
+
+    def test_second_group_phase_random_splits_qualifiers(self):
+        tournament = self._tournament_with_second_phase("segunda-aleatoria", "RANDOM")
+        self.assertTrue(tournament.phases.filter(slug="segunda-fase").exists())
+        first_ko = tournament.phases.order_by("order")[2]
+        node = first_ko.bracket.nodes.order_by("position").first()
+        self.assertEqual(node.home_source["group_slug"], "segunda-a")
+        self.assertEqual(node.away_source["group_slug"], "segunda-b")
+
+        res = self.client.post(
+            f"/api/v1/sports/tournaments/{tournament.slug}/generate-second-phase/",
+            {},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        phase = tournament.phases.get(slug="segunda-fase")
+        sizes = [
+            group.memberships.count()
+            for group in phase.groups.order_by("order")
+        ]
+        self.assertEqual(sizes, [2, 2])
+
+    def test_second_group_phase_manual_assignment(self):
+        tournament = self._tournament_with_second_phase("segunda-manual", "MANUAL")
+        preview = self.client.get(
+            f"/api/v1/sports/tournaments/{tournament.slug}/generate-second-phase/"
+        )
+        self.assertEqual(preview.status_code, 200, preview.content)
+        quals = preview.json()["qualifiers"]
+        self.assertEqual(len(quals), 4)
+        payload = {
+            "groups": [
+                {"slug": "segunda-a", "team_ids": [quals[0]["team_id"], quals[1]["team_id"]]},
+                {"slug": "segunda-b", "team_ids": [quals[2]["team_id"], quals[3]["team_id"]]},
+            ]
+        }
+        res = self.client.post(
+            f"/api/v1/sports/tournaments/{tournament.slug}/generate-second-phase/",
+            payload,
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        phase = tournament.phases.get(slug="segunda-fase")
+        group_a = phase.groups.get(slug="segunda-a")
+        self.assertCountEqual(
+            [str(team_id) for team_id in group_a.memberships.values_list("team_id", flat=True)],
+            [quals[0]["team_id"], quals[1]["team_id"]],
+        )

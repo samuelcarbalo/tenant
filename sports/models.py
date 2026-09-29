@@ -112,6 +112,34 @@ class Tournament(TimeStampedModel):
         default=True,
         help_text="Aplica knockout por diferencia de carreras (softbol).",
     )
+    has_second_group_phase = models.BooleanField(
+        default=False,
+        help_text="Segunda fase de grupos antes de los playoffs.",
+    )
+    first_phase_qualified_per_group = models.PositiveSmallIntegerField(
+        default=2,
+        help_text="Equipos que clasifican por grupo en la primera fase.",
+    )
+    second_phase_groups_count = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Grupos de la segunda fase: 1 o 2.",
+    )
+    second_phase_qualified_per_group = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Equipos que pasan de cada grupo de la segunda fase a playoffs.",
+    )
+    SECOND_PHASE_ASSIGNMENT_CHOICES = [
+        ("RANDOM", "Aleatoria"),
+        ("MANUAL", "Manual"),
+    ]
+    second_phase_assignment_method = models.CharField(
+        max_length=10,
+        choices=SECOND_PHASE_ASSIGNMENT_CHOICES,
+        default="RANDOM",
+        blank=True,
+    )
 
     class Meta:
         db_table = "tournaments"

@@ -68,6 +68,8 @@ from .services.structure import (
     apply_format_template,
     assign_teams_to_group,
     generate_round_robin_fixtures,
+    generate_second_group_phase,
+    second_phase_preview,
 )
 from .services.advancement import (
     advance_phase as run_advance_phase,
@@ -288,7 +290,7 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     def format_templates(self, request):
         """Plantillas de formato disponibles (cacheadas 1 h)."""
         sport_type = request.query_params.get("sport_type") or "all"
-        cache_key = f"sports:format_templates:v2:{sport_type}"
+        cache_key = f"sports:format_templates:v3:{sport_type}"
         data = cache.get(cache_key)
         if data is None:
             data = list_templates(
@@ -450,6 +452,21 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
+
+    @action(detail=True, methods=["get", "post"], url_path="generate-second-phase")
+    def generate_second_phase(self, request, slug=None):
+        """Reparte clasificados de la primera fase en la segunda fase de grupos."""
+        tournament = self.get_object()
+        if request.method == "GET":
+            try:
+                return Response(second_phase_preview(tournament))
+            except ValueError as exc:
+                return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            phase = generate_second_group_phase(tournament, request.data)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(TournamentPhaseSerializer(phase).data)
 
     @action(detail=True, methods=["get"], permission_classes=[AllowAny])
     def bracket(self, request, slug=None):

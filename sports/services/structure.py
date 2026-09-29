@@ -75,8 +75,22 @@ def apply_format_template(tournament: Tournament, template_id: str, group_count:
         if phase_def.get("phase_type") == "knockout" or phase_def.get("bracket"):
             _create_bracket_for_phase(phase, phase_def.get("bracket", {}))
 
+        if (
+            tournament.has_second_group_phase
+            and phase.phase_type == "group_stage"
+            and phase.order == 1
+        ):
+            rules = dict(phase.advancement_rules or {})
+            rules["type"] = "top_n_per_group"
+            rules["n"] = tournament.first_phase_qualified_per_group or 2
+            phase.advancement_rules = rules
+            phase.save(update_fields=["advancement_rules"])
+
     if template.get("dynamic_playoff"):
-        _append_dynamic_playoff(tournament, group_count)
+        if tournament.has_second_group_phase:
+            _append_second_group_phase(tournament)
+        else:
+            _append_dynamic_playoff(tournament, group_count)
 
 
 def _group_letter(index: int) -> str:
@@ -130,9 +144,9 @@ def _next_round_pairings(previous_round_code: str, node_count: int):
     return pairings
 
 
-def build_playoff_rounds(group_count: int):
+def build_rounds_from_pairings(pairings):
     rounds = []
-    current = _cross_group_pairings(group_count)
+    current = pairings
     while current:
         code, slug, name = _playoff_round_meta(len(current))
         rounds.append({"code": code, "slug": slug, "name": name, "pairings": current})
@@ -142,8 +156,43 @@ def build_playoff_rounds(group_count: int):
     return rounds
 
 
-def _append_dynamic_playoff(tournament: Tournament, group_count: int):
-    for offset, round_def in enumerate(build_playoff_rounds(group_count), start=2):
+def build_playoff_rounds(group_count: int):
+    return build_rounds_from_pairings(_cross_group_pairings(group_count))
+
+
+SECOND_PHASE_SLUG = "segunda-fase"
+
+
+def _group_rank(slug: str, rank: int):
+    return {"type": "group_rank", "group_slug": slug, "rank": rank}
+
+
+def _second_phase_pairings(group_slugs, qualifiers: int):
+    qualifiers = max(1, int(qualifiers or 1))
+    if len(group_slugs) <= 1:
+        slug = group_slugs[0]
+        ranks = list(range(1, qualifiers + 1))
+        pairings = []
+        low, high = 0, len(ranks) - 1
+        while low < high:
+            pairings.append((_group_rank(slug, ranks[low]), _group_rank(slug, ranks[high])))
+            low += 1
+            high -= 1
+        if low == high:
+            pairings.append((_group_rank(slug, ranks[low]), {"type": "bye"}))
+        return pairings
+    home_slug, away_slug = group_slugs[0], group_slugs[1]
+    return [
+        (
+            _group_rank(home_slug, rank),
+            _group_rank(away_slug, qualifiers + 1 - rank),
+        )
+        for rank in range(1, qualifiers + 1)
+    ]
+
+
+def _append_playoff_rounds(tournament: Tournament, pairings, start_order: int):
+    for offset, round_def in enumerate(build_rounds_from_pairings(pairings), start=start_order):
         phase = TournamentPhase.objects.create(
             tournament=tournament,
             name=round_def["name"],
@@ -162,6 +211,53 @@ def _append_dynamic_playoff(tournament: Tournament, group_count: int):
                 home_source=home,
                 away_source=away,
             )
+
+
+def _append_second_group_phase(tournament: Tournament):
+    count = tournament.second_phase_groups_count or 2
+    if count not in (1, 2):
+        count = 2
+    qualifiers_out = max(1, int(tournament.second_phase_qualified_per_group or 2))
+    first_phase = (
+        tournament.phases.filter(phase_type="group_stage").order_by("order").first()
+    )
+    first_groups = first_phase.groups.count() if first_phase else 0
+    first_n = max(1, int(tournament.first_phase_qualified_per_group or 2))
+    total_in = max(first_groups * first_n, count)
+    cap = max(2, (total_in + count - 1) // count)
+    phase = TournamentPhase.objects.create(
+        tournament=tournament,
+        name="Segunda fase de grupos",
+        slug=SECOND_PHASE_SLUG,
+        phase_type="group_stage",
+        order=2,
+        status="pending",
+        config={"teams_per_group": cap, "stage": "second"},
+        advancement_rules={"type": "top_n_per_group", "n": qualifiers_out},
+    )
+    slugs = []
+    for i in range(count):
+        letter = chr(ord("A") + i)
+        slug = f"segunda-{letter.lower()}"
+        slugs.append(slug)
+        CompetitionGroup.objects.create(
+            phase=phase,
+            name=f"Grupo {letter}",
+            slug=slug,
+            order=i + 1,
+            max_teams=cap,
+        )
+    _append_playoff_rounds(
+        tournament,
+        _second_phase_pairings(slugs, qualifiers_out),
+        start_order=3,
+    )
+
+
+def _append_dynamic_playoff(tournament: Tournament, group_count: int):
+    _append_playoff_rounds(
+        tournament, _cross_group_pairings(group_count), start_order=2
+    )
 
 
 def _create_bracket_for_phase(phase: TournamentPhase, bracket_def: dict):
@@ -188,6 +284,159 @@ def assign_teams_to_group(group: CompetitionGroup, team_ids: list):
             GroupMembership(group=group, team_id=team_id, seed=idx)
         )
     GroupMembership.objects.bulk_create(memberships)
+
+
+def _first_phase_qualifiers(tournament: Tournament):
+    from sports.scoring import StandingsService
+
+    phase = (
+        tournament.phases.filter(phase_type="group_stage")
+        .exclude(slug=SECOND_PHASE_SLUG)
+        .order_by("order")
+        .first()
+    )
+    if not phase:
+        return []
+    per_group = max(1, int(tournament.first_phase_qualified_per_group or 2))
+    selected = []
+    seen = set()
+    for group in phase.groups.order_by("order"):
+        rows = StandingsService.compute(tournament, phase=phase, group=group)
+        taken = 0
+        for row in rows:
+            team = row["team"]
+            if team.id in seen:
+                continue
+            selected.append(
+                {
+                    "team": team,
+                    "from_group": group.name,
+                    "rank": row["position"],
+                }
+            )
+            seen.add(team.id)
+            taken += 1
+            if taken >= per_group:
+                break
+    return selected
+
+
+def _second_phase(tournament: Tournament):
+    if not tournament.has_second_group_phase:
+        raise ValueError("Este torneo no incluye una segunda fase de grupos.")
+    phase = tournament.phases.filter(slug=SECOND_PHASE_SLUG).first()
+    if not phase:
+        raise ValueError("La segunda fase de grupos no está creada.")
+    return phase
+
+
+def second_phase_preview(tournament: Tournament):
+    phase = _second_phase(tournament)
+    qualifiers = _first_phase_qualifiers(tournament)
+    return {
+        "assignment_method": tournament.second_phase_assignment_method or "RANDOM",
+        "qualifiers": [
+            {
+                "team_id": str(item["team"].id),
+                "team_name": item["team"].name,
+                "from_group": item["from_group"],
+                "rank": item["rank"],
+            }
+            for item in qualifiers
+        ],
+        "groups": [
+            {
+                "id": str(group.id),
+                "slug": group.slug,
+                "name": group.name,
+                "team_ids": [
+                    str(team_id)
+                    for team_id in group.memberships.order_by("seed").values_list(
+                        "team_id", flat=True
+                    )
+                ],
+            }
+            for group in phase.groups.order_by("order")
+        ],
+    }
+
+
+def _snake_assign(groups, qualifiers):
+    buckets = {group.id: [] for group in groups}
+    if not groups:
+        return []
+    index = 0
+    direction = 1
+    for item in qualifiers:
+        buckets[groups[index].id].append(item["team"])
+        if len(groups) == 1:
+            continue
+        nxt = index + direction
+        if nxt < 0 or nxt >= len(groups):
+            direction *= -1
+        else:
+            index = nxt
+    return [(group, buckets[group.id]) for group in groups]
+
+
+def _manual_assign(groups, qualifiers, payload_groups):
+    if not payload_groups:
+        raise ValueError("Envía la lista de equipos de cada grupo de la segunda fase.")
+    by_slug = {group.slug: group for group in groups}
+    by_id = {str(item["team"].id): item["team"] for item in qualifiers}
+    buckets = {group.id: [] for group in groups}
+    seen = set()
+    for entry in payload_groups:
+        slug = entry.get("slug")
+        group = by_slug.get(slug)
+        if not group:
+            raise ValueError(f"Grupo desconocido: {slug}")
+        for raw in entry.get("team_ids") or []:
+            key = str(raw)
+            team = by_id.get(key)
+            if team is None:
+                raise ValueError("Hay equipos que no clasificaron en la primera fase.")
+            if key in seen:
+                raise ValueError("Un equipo no puede estar en dos grupos.")
+            seen.add(key)
+            buckets[group.id].append(team)
+    missing = [
+        item["team"].name
+        for item in qualifiers
+        if str(item["team"].id) not in seen
+    ]
+    if missing:
+        raise ValueError("Faltan clasificados por asignar: " + ", ".join(missing))
+    empty = [group.name for group in groups if not buckets[group.id]]
+    if empty:
+        raise ValueError("Cada grupo de la segunda fase debe tener al menos un equipo.")
+    return [(group, buckets[group.id]) for group in groups]
+
+
+def generate_second_group_phase(tournament: Tournament, payload=None):
+    """Reparte los clasificados de la primera fase en los grupos de la segunda."""
+    payload = payload or {}
+    phase = _second_phase(tournament)
+    if Match.objects.filter(phase=phase).exists():
+        raise ValueError("La segunda fase ya tiene partidos. No se puede redistribuir.")
+    qualifiers = _first_phase_qualifiers(tournament)
+    if len(qualifiers) < 2:
+        raise ValueError(
+            "Se necesitan al menos 2 clasificados de la primera fase. "
+            "Asigna equipos a esos grupos antes de generar la segunda."
+        )
+    groups = list(phase.groups.order_by("order"))
+    method = (tournament.second_phase_assignment_method or "RANDOM").upper()
+    if method == "MANUAL":
+        assignment = _manual_assign(groups, qualifiers, payload.get("groups") or [])
+    else:
+        assignment = _snake_assign(groups, qualifiers)
+    for group, teams in assignment:
+        if len(teams) > group.max_teams:
+            group.max_teams = len(teams)
+            group.save(update_fields=["max_teams"])
+        assign_teams_to_group(group, [team.id for team in teams])
+    return phase
 
 
 def generate_round_robin_fixtures(
