@@ -1597,36 +1597,49 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         GET /api/v1/sports/matches/{id}/lineup/
         """
         match = self.get_object()
-        lineups = MatchLineup.objects.filter(match=match).select_related(
-            "player", "team"
-        )
 
-        home_lineup = lineups.filter(team=match.home_team)
-        away_lineup = lineups.filter(team=match.away_team)
+        def team_block(team, starters=None, substitutes=None):
+            return {
+                "id": team.id,
+                "name": team.name,
+                "starters": starters or [],
+                "substitutes": substitutes or [],
+            }
+
+        try:
+            lineups = MatchLineup.objects.filter(match=match).select_related(
+                "player", "team"
+            )
+            home_lineup = lineups.filter(team=match.home_team)
+            away_lineup = lineups.filter(team=match.away_team)
+            home_block = team_block(
+                match.home_team,
+                MatchLineupSerializer(home_lineup.filter(is_starter=True), many=True).data,
+                MatchLineupSerializer(home_lineup.filter(is_starter=False), many=True).data,
+            )
+            away_block = team_block(
+                match.away_team,
+                MatchLineupSerializer(away_lineup.filter(is_starter=True), many=True).data,
+                MatchLineupSerializer(away_lineup.filter(is_starter=False), many=True).data,
+            )
+        except DatabaseError:
+            logger.exception("No se pudo consultar la alineación del partido %s", match.id)
+            return Response(
+                {
+                    "match_id": match.id,
+                    "home_team": team_block(match.home_team),
+                    "away_team": team_block(match.away_team),
+                    "lineup": [],
+                    "message": "Alineación no disponible",
+                },
+                status=status.HTTP_200_OK,
+            )
 
         return Response(
             {
                 "match_id": match.id,
-                "home_team": {
-                    "id": match.home_team.id,
-                    "name": match.home_team.name,
-                    "starters": MatchLineupSerializer(
-                        home_lineup.filter(is_starter=True), many=True
-                    ).data,
-                    "substitutes": MatchLineupSerializer(
-                        home_lineup.filter(is_starter=False), many=True
-                    ).data,
-                },
-                "away_team": {
-                    "id": match.away_team.id,
-                    "name": match.away_team.name,
-                    "starters": MatchLineupSerializer(
-                        away_lineup.filter(is_starter=True), many=True
-                    ).data,
-                    "substitutes": MatchLineupSerializer(
-                        away_lineup.filter(is_starter=False), many=True
-                    ).data,
-                },
+                "home_team": home_block,
+                "away_team": away_block,
             }
         )
 

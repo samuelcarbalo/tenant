@@ -1,7 +1,9 @@
 """Detalle público de partidos (finalizados y programados) para visitantes sin sesión."""
 
 from datetime import timedelta
+from unittest import mock
 
+from django.db import DatabaseError
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -67,6 +69,19 @@ class MatchPublicAccessTests(TestCase):
             for suffix in ("", "periods/", "lineup/"):
                 res = self.client.get(f"/api/v1/sports/matches/{match.id}/{suffix}")
                 self.assertEqual(res.status_code, 200, f"{match.status} {suffix}: {res.content}")
+
+    def test_lineup_database_error_returns_empty_lineup(self):
+        with mock.patch(
+            "sports.views.MatchLineup.objects.filter",
+            side_effect=DatabaseError('column players.phone does not exist'),
+        ):
+            res = self.client.get(f"/api/v1/sports/matches/{self.finished.id}/lineup/")
+        self.assertEqual(res.status_code, 200, res.content)
+        body = res.json()
+        self.assertEqual(body["message"], "Alineación no disponible")
+        self.assertEqual(body["lineup"], [])
+        self.assertEqual(body["home_team"]["starters"], [])
+        self.assertEqual(body["away_team"]["substitutes"], [])
 
     def test_missing_match_returns_404(self):
         res = self.client.get("/api/v1/sports/matches/00000000-0000-0000-0000-000000000000/")
