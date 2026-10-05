@@ -81,10 +81,13 @@ from .services.advancement import (
 )
 from sports.models import BracketNode
 from core.permissions import (
+    HasTeamDeletePermission,
+    HasTeamEditPermission,
     IsCoachOfTeam,
     IsSportsSuperAdminOrOrgMember,
     _is_sports_super_admin,
     resolve_request_organization,
+    user_can_edit_team,
     user_can_manage_content,
     user_is_platform_elevated,
 )
@@ -747,7 +750,11 @@ class TeamViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
             return [AllowAny()]
         if self.action in ["import_roster", "import_roster_template"]:
             return [IsAuthenticated()]
-        # Super Admin o miembro de organización pueden crear/editar/eliminar equipos
+        if self.action in ["update", "partial_update"]:
+            return [IsAuthenticated(), HasTeamEditPermission()]
+        if self.action == "destroy":
+            return [IsAuthenticated(), HasTeamDeletePermission()]
+        # Crear equipos: Super Admin o miembro de la organización
         return [IsAuthenticated(), IsSportsSuperAdminOrOrgMember()]
 
     def get_queryset(self):
@@ -761,15 +768,30 @@ class TeamViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         if tournament_slug:
             queryset = queryset.filter(tournament__slug=tournament_slug)
 
-        # Super Admin: ve todos los equipos sin restricción de organización
-        if user.is_authenticated and _is_sports_super_admin(user):
-            return queryset.order_by("-points", "name")
-
-        # Usuarios normales autenticados: filtrar por su organización
-        if user.is_authenticated:
+        # Listado general sin torneo: usuarios normales ven solo su organización.
+        # El detalle y los equipos de un torneo son públicos; la edición la valida HasTeamEditPermission.
+        if (
+            self.action == "list"
+            and not tournament_slug
+            and user.is_authenticated
+            and not _is_sports_super_admin(user)
+        ):
             queryset = queryset.filter(organization=user.organization)
 
         return queryset.order_by("-points", "name")
+
+    def get_object(self):
+        """Acepta el UUID o el slug del equipo (usar ?tournament= si el slug se repite)."""
+        queryset = self.filter_queryset(self.get_queryset())
+        lookup = str(self.kwargs.get(self.lookup_url_kwarg or self.lookup_field, ""))
+        try:
+            team = queryset.filter(pk=uuid.UUID(lookup)).first()
+        except ValueError:
+            team = queryset.filter(slug=lookup).first()
+        if team is None:
+            raise NotFound("Equipo no encontrado.")
+        self.check_object_permissions(self.request, team)
+        return team
 
     @action(detail=True, methods=["get"], permission_classes=[AllowAny])
     def players(self, request, pk=None):
@@ -866,7 +888,14 @@ class TeamViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
-        """Mantener posted_by original en actualizaciones"""
+        """Mantener posted_by original; solo un Super Admin puede mover el equipo de torneo."""
+        new_tournament = serializer.validated_data.get("tournament")
+        if (
+            new_tournament is not None
+            and new_tournament.pk != serializer.instance.tournament_id
+            and not _is_sports_super_admin(self.request.user)
+        ):
+            raise PermissionDenied("Solo un Super Admin puede cambiar el torneo de un equipo.")
         serializer.save()
 
 
@@ -928,7 +957,14 @@ class PlayerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         return queryset.order_by("jersey_number", "last_name")
 
     def perform_update(self, serializer):
-        """Mantener posted_by original"""
+        """Mantener posted_by original; no permitir mover el jugador a un equipo ajeno."""
+        new_team = serializer.validated_data.get("team")
+        if (
+            new_team is not None
+            and new_team.pk != serializer.instance.team_id
+            and not user_can_edit_team(self.request.user, new_team)
+        ):
+            raise PermissionDenied("No puedes mover jugadores a un equipo que no gestionas.")
         serializer.save()
 
     def destroy(self, request, *args, **kwargs):
@@ -937,7 +973,7 @@ class PlayerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
 
         if not _is_sports_super_admin(request.user) and not IsCoachOfTeam().has_object_permission(request, self, player):
             return Response(
-                {"error": "Solo el coach del equipo o un Super Admin puede eliminar jugadores"},
+                {"error": "Solo un Super Admin, el creador del torneo o el delegado/capitán del equipo puede eliminar jugadores"},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -989,6 +1025,11 @@ class PlayerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Asignar posted_by desde el usuario autenticado y crear usuario automático."""
         team = serializer.validated_data.get("team")
+        if team is not None and not user_can_edit_team(self.request.user, team):
+            raise PermissionDenied(
+                "Solo un Super Admin, el creador del torneo o el delegado/capitán del equipo "
+                "puede agregar jugadores."
+            )
         tournament = serializer.validated_data.get("tournament")
         if not tournament and team:
             tournament = team.tournament
