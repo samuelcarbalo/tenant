@@ -515,6 +515,8 @@ class MatchListSerializer(serializers.ModelSerializer):
 
     home_team_name = serializers.CharField(source="home_team.name", read_only=True)
     away_team_name = serializers.CharField(source="away_team.name", read_only=True)
+    home_team_abbreviation = serializers.CharField(source="home_team.abbreviation", read_only=True)
+    away_team_abbreviation = serializers.CharField(source="away_team.abbreviation", read_only=True)
     home_team_logo = serializers.CharField(source="home_team.logo", read_only=True)
     away_team_logo = serializers.CharField(source="away_team.logo", read_only=True)
     tournament_name = serializers.CharField(source="tournament.name", read_only=True)
@@ -528,9 +530,11 @@ class MatchListSerializer(serializers.ModelSerializer):
             "tournament_name",
             "home_team",
             "home_team_name",
+            "home_team_abbreviation",
             "home_team_logo",
             "away_team",
             "away_team_name",
+            "away_team_abbreviation",
             "away_team_logo",
             "home_score",
             "away_score",

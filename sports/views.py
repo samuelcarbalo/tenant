@@ -89,6 +89,7 @@ from core.permissions import (
     resolve_request_organization,
     user_can_edit_team,
     user_can_manage_content,
+    user_is_team_tournament_owner,
     user_is_platform_elevated,
 )
 from sports.access import SportsSubscriptionGuardMixin
@@ -1025,10 +1026,13 @@ class PlayerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Asignar posted_by desde el usuario autenticado y crear usuario automático."""
         team = serializer.validated_data.get("team")
-        if team is not None and not user_can_edit_team(self.request.user, team):
+        if team is not None and not (
+            _is_sports_super_admin(self.request.user)
+            or user_is_team_tournament_owner(self.request.user, team)
+        ):
             raise PermissionDenied(
-                "Solo un Super Admin, el creador del torneo o el delegado/capitán del equipo "
-                "puede agregar jugadores."
+                "Solo un Super Admin (Nivel 1 o Nivel 2) o el creador del torneo puede "
+                "inscribir jugadores."
             )
         tournament = serializer.validated_data.get("tournament")
         if not tournament and team:

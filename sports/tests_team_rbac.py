@@ -126,16 +126,21 @@ class TeamEditRBACTests(TestCase):
         self.assertFalse(self._client(self.member).get(detail).json()["can_edit"])
         self.assertFalse(APIClient().get(detail).json()["can_edit"])
 
-    def test_only_team_editors_can_add_players(self):
+    def test_only_super_admin_or_tournament_owner_can_add_players(self):
         payload = {
             "first_name": "Nuevo",
             "last_name": "Jugador",
-            "jersey_number": 22,
             "position": "forward",
             "team": str(self.team.id),
             "tournament": str(self.tournament.id),
         }
-        res = self._client(self.member).post("/api/v1/sports/players/", payload, format="json")
-        self.assertEqual(res.status_code, 403, res.content)
-        res = self._client(self.captain_user).post("/api/v1/sports/players/", payload, format="json")
-        self.assertEqual(res.status_code, 201, res.content)
+        for user in (self.member, self.delegate, self.captain_user):
+            res = self._client(user).post(
+                "/api/v1/sports/players/", {**payload, "jersey_number": 30}, format="json"
+            )
+            self.assertEqual(res.status_code, 403, f"{user.username}: {res.content}")
+        for number, user in ((22, self.owner), (23, self.level2)):
+            res = self._client(user).post(
+                "/api/v1/sports/players/", {**payload, "jersey_number": number}, format="json"
+            )
+            self.assertEqual(res.status_code, 201, f"{user.username}: {res.content}")
