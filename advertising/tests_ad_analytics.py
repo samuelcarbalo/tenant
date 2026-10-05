@@ -72,7 +72,7 @@ class AdImpressionTrackingTests(TestCase):
         self.assertEqual(self.banner.impressions, 0)
 
 
-class AdAnalyticsReportTests(TestCase):
+class _ReportFixtures:
     def setUp(self):
         self.org = Organization.objects.create(name="Org Reporte", slug="org-reporte")
         self.manager = User.objects.create_user(
@@ -107,6 +107,8 @@ class AdAnalyticsReportTests(TestCase):
             impression = AdImpression.objects.create(ad=banner)
             AdImpression.objects.filter(pk=impression.pk).update(viewed_at=when)
 
+
+class AdAnalyticsReportTests(_ReportFixtures, TestCase):
     def _get(self, user, params):
         client = APIClient()
         client.force_authenticate(user)
@@ -145,4 +147,61 @@ class AdAnalyticsReportTests(TestCase):
 
     def test_invalid_range_returns_400(self):
         res = self._get(self.level2, {"start": "2026-10-05", "end": "2026-10-01"})
+        self.assertEqual(res.status_code, 400)
+
+
+class AdImpressionsSummaryTests(_ReportFixtures, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.other_sponsor = User.objects.create_user(
+            email="otro@test.com",
+            username="otro_sponsor",
+            password="SecurePass123!",
+            organization=self.org,
+            role="manager",
+        )
+        self.banner_c = AdvertisementBanner.objects.create(
+            title="Marca C", image="https://cdn.test/c.png", posted_by=self.other_sponsor
+        )
+        self._impressions(self.banner_c, _bogota(2026, 10, 2, 9), 1)
+        self.summary_url = "/api/v1/admin/ads/impressions-summary/"
+
+    def _summary(self, user, params):
+        client = APIClient()
+        client.force_authenticate(user)
+        return client.get(self.summary_url, params)
+
+    def test_only_super_admins_can_read_summary(self):
+        self.assertEqual(self._summary(self.manager, {}).status_code, 403)
+        self.assertEqual(APIClient().get(self.summary_url).status_code, 401)
+
+    def test_kpis_and_last_view_in_bogota(self):
+        res = self._summary(self.level2, {"start_date": "2026-10-01", "end_date": "2026-10-04"})
+        self.assertEqual(res.status_code, 200, res.content)
+        body = res.json()
+        kpis = body["kpis"]
+        self.assertEqual(kpis["views_in_range"], 7)
+        self.assertEqual(kpis["views_all_time"], 12)
+        self.assertEqual(kpis["active_ads"], 2)
+        self.assertEqual(kpis["total_ads"], 3)
+        self.assertEqual(kpis["top_sponsor"], {"name": self.manager.full_name, "views": 6})
+        self.assertEqual(len(body["options"]), 3)
+
+        ads = {ad["title"]: ad for ad in body["ads"]}
+        self.assertTrue(ads["Marca A"]["last_viewed_at"].startswith("2026-10-03T10:00:00"))
+        self.assertTrue(ads["Marca A"]["last_viewed_at"].endswith("-05:00"))
+
+    def test_ad_filter_limits_table_but_not_kpis(self):
+        res = self._summary(
+            self.level2,
+            {"start_date": "2026-10-01", "end_date": "2026-10-04", "ad_id": str(self.banner_c.id)},
+        )
+        body = res.json()
+        self.assertEqual([ad["title"] for ad in body["ads"]], ["Marca C"])
+        self.assertEqual(body["total_views"], 1)
+        self.assertEqual(body["kpis"]["views_in_range"], 7)
+        self.assertEqual(len(body["options"]), 3)
+
+    def test_invalid_ad_id_returns_400(self):
+        res = self._summary(self.level2, {"ad_id": "no-es-uuid"})
         self.assertEqual(res.status_code, 400)

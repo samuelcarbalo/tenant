@@ -7,7 +7,7 @@ from payments.views import mercadopago_webhook
 from config.email_debug import test_email_view
 from core.views import test_email_api
 from core.health import healthz
-from advertising.analytics import AdAnalyticsView, TrackAdImpressionView
+from advertising.analytics import AdAnalyticsView, AdImpressionsSummaryView, TrackAdImpressionView
 
 
 def health_check(request):
@@ -49,6 +49,11 @@ urlpatterns = [
         name="ad-track-impression",
     ),
     path("api/v1/admin/ads/analytics/", AdAnalyticsView.as_view(), name="admin-ads-analytics"),
+    path(
+        "api/v1/admin/ads/impressions-summary/",
+        AdImpressionsSummaryView.as_view(),
+        name="admin-ads-impressions-summary",
+    ),
     path("api/v1/admin/", include("authentication.admin_urls")),
     path("api/v1/profiles/", include("profiles.urls")),
     path(
