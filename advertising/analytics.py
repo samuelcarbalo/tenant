@@ -1,8 +1,10 @@
 """Rastreo de impresiones de banners y reporte de métricas para Super Admin L1/L2."""
 
+from collections import defaultdict
 from datetime import datetime, time, timedelta
 
-from django.db.models import Count, F, Q
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db.models import Count, F, Max, Q
 from django.db.models.functions import TruncDay
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -71,9 +73,9 @@ def _sponsor_name(banner) -> str:
     return (getattr(owner, "full_name", "") or "").strip() or owner.email
 
 
-def _parse_range(params):
+def _parse_range(params, start_key="start", end_key="end"):
     today = timezone.localdate()
-    raw_start, raw_end = params.get("start"), params.get("end")
+    raw_start, raw_end = params.get(start_key), params.get(end_key)
     end = parse_date(raw_end) if raw_end else today
     start = parse_date(raw_start) if raw_start else end - timedelta(days=DEFAULT_RANGE_DAYS - 1)
     if start is None or end is None:
@@ -85,6 +87,91 @@ def _parse_range(params):
     return start, end
 
 
+def _ensure_super_admin(user):
+    if not user_is_module_super_admin(user):
+        raise PermissionDenied("Solo Super Administradores (Nivel 1 o Nivel 2).")
+
+
+def _build_report(params, start_key, end_key, ad_key):
+    """Métricas del rango [start, end] (días en America/Bogota), opcionalmente de un solo anuncio."""
+    start, end = _parse_range(params, start_key, end_key)
+    tz = timezone.get_current_timezone()
+    start_dt = timezone.make_aware(datetime.combine(start, time.min), tz)
+    end_dt = timezone.make_aware(datetime.combine(end + timedelta(days=1), time.min), tz)
+
+    selected = None
+    ad_id = params.get(ad_key)
+    impressions = AdImpression.objects.filter(viewed_at__gte=start_dt, viewed_at__lt=end_dt)
+    if ad_id:
+        try:
+            selected = AdvertisementBanner.objects.filter(pk=ad_id).first()
+        except (ValueError, DjangoValidationError):
+            selected = None
+        if selected is None:
+            raise ValidationError({ad_key: "Anuncio no encontrado."})
+        impressions = impressions.filter(ad=selected)
+
+    per_day = {
+        row["day"].date(): row["views"]
+        for row in impressions.annotate(day=TruncDay("viewed_at", tzinfo=tz))
+        .values("day")
+        .annotate(views=Count("id"))
+        .order_by("day")
+    }
+    daily = []
+    current = start
+    while current <= end:
+        daily.append({"date": current.isoformat(), "views": per_day.get(current, 0)})
+        current += timedelta(days=1)
+    total_views = sum(item["views"] for item in daily)
+    peak = max(daily, key=lambda item: item["views"]) if total_views else None
+
+    in_range = Q(impression_logs__viewed_at__gte=start_dt, impression_logs__viewed_at__lt=end_dt)
+    banners = (
+        AdvertisementBanner.objects.select_related(
+            "tournament", "posted_by", "sponsorship__posted_by", "campaign__posted_by"
+        )
+        .annotate(
+            views_in_range=Count("impression_logs", filter=in_range),
+            total_views=Count("impression_logs"),
+            last_viewed_at=Max("impression_logs__viewed_at"),
+        )
+        .order_by("-views_in_range", "-total_views", "title")
+    )
+
+    ads = [
+        {
+            "id": str(banner.id),
+            "title": banner.title,
+            "sponsor": _sponsor_name(banner),
+            "position": banner.position,
+            "position_display": banner.get_position_display(),
+            "tournament_name": banner.tournament.name if banner.tournament_id else "",
+            "is_active": bool(banner.is_visible),
+            "start_date": banner.start_date.isoformat() if banner.start_date else None,
+            "end_date": banner.end_date.isoformat() if banner.end_date else None,
+            "views_in_range": banner.views_in_range,
+            "total_views": banner.total_views,
+            "last_viewed_at": (
+                timezone.localtime(banner.last_viewed_at, tz).isoformat() if banner.last_viewed_at else None
+            ),
+            "clicks": banner.clicks,
+        }
+        for banner in banners
+    ]
+
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "timezone": str(tz),
+        "ad": {"id": str(selected.id), "title": selected.title} if selected else None,
+        "total_views": total_views,
+        "peak_day": peak,
+        "daily": daily,
+        "ads": ads,
+    }
+
+
 class AdAnalyticsView(APIView):
     """
     GET /api/v1/admin/ads/analytics/?start=YYYY-MM-DD&end=YYYY-MM-DD&ad=<uuid>
@@ -94,77 +181,44 @@ class AdAnalyticsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not user_is_module_super_admin(request.user):
-            raise PermissionDenied("Solo Super Administradores (Nivel 1 o Nivel 2).")
+        _ensure_super_admin(request.user)
+        return Response(_build_report(request.query_params, "start", "end", "ad"))
 
-        start, end = _parse_range(request.query_params)
-        tz = timezone.get_current_timezone()
-        start_dt = timezone.make_aware(datetime.combine(start, time.min), tz)
-        end_dt = timezone.make_aware(datetime.combine(end + timedelta(days=1), time.min), tz)
 
-        selected = None
-        ad_id = request.query_params.get("ad")
-        impressions = AdImpression.objects.filter(viewed_at__gte=start_dt, viewed_at__lt=end_dt)
-        if ad_id:
-            selected = AdvertisementBanner.objects.filter(pk=ad_id).first()
-            if selected is None:
-                raise ValidationError({"ad": "Anuncio no encontrado."})
-            impressions = impressions.filter(ad=selected)
+class AdImpressionsSummaryView(APIView):
+    """
+    GET /api/v1/admin/ads/impressions-summary/?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&ad_id=<uuid>
+    Historial de views para la pestaña Publicidad del panel admin (Super Admin L1/L2).
+    Los KPIs cubren todos los anuncios del rango; ``ads`` y ``daily`` respetan ``ad_id``.
+    """
 
-        per_day = {
-            row["day"].date(): row["views"]
-            for row in impressions.annotate(day=TruncDay("viewed_at", tzinfo=tz))
-            .values("day")
-            .annotate(views=Count("id"))
-            .order_by("day")
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        _ensure_super_admin(request.user)
+        report = _build_report(request.query_params, "start_date", "end_date", "ad_id")
+        all_ads = report["ads"]
+
+        views_by_sponsor = defaultdict(int)
+        for ad in all_ads:
+            if ad["views_in_range"]:
+                views_by_sponsor[ad["sponsor"] or ad["title"]] += ad["views_in_range"]
+        top_sponsor = None
+        if views_by_sponsor:
+            name, views = max(views_by_sponsor.items(), key=lambda item: item[1])
+            top_sponsor = {"name": name, "views": views}
+
+        report["kpis"] = {
+            "active_ads": sum(1 for ad in all_ads if ad["is_active"]),
+            "total_ads": len(all_ads),
+            "views_in_range": sum(ad["views_in_range"] for ad in all_ads),
+            "views_all_time": sum(ad["total_views"] for ad in all_ads),
+            "top_sponsor": top_sponsor,
         }
-        daily = []
-        current = start
-        while current <= end:
-            daily.append({"date": current.isoformat(), "views": per_day.get(current, 0)})
-            current += timedelta(days=1)
-        total_views = sum(item["views"] for item in daily)
-        peak = max(daily, key=lambda item: item["views"]) if total_views else None
-
-        in_range = Q(impression_logs__viewed_at__gte=start_dt, impression_logs__viewed_at__lt=end_dt)
-        banners = (
-            AdvertisementBanner.objects.select_related(
-                "tournament", "posted_by", "sponsorship__posted_by", "campaign__posted_by"
-            )
-            .annotate(
-                views_in_range=Count("impression_logs", filter=in_range),
-                total_views=Count("impression_logs"),
-            )
-            .order_by("-views_in_range", "-total_views", "title")
-        )
-
-        ads = [
-            {
-                "id": str(banner.id),
-                "title": banner.title,
-                "sponsor": _sponsor_name(banner),
-                "position": banner.position,
-                "position_display": banner.get_position_display(),
-                "tournament_name": banner.tournament.name if banner.tournament_id else "",
-                "is_active": bool(banner.is_visible),
-                "start_date": banner.start_date.isoformat() if banner.start_date else None,
-                "end_date": banner.end_date.isoformat() if banner.end_date else None,
-                "views_in_range": banner.views_in_range,
-                "total_views": banner.total_views,
-                "clicks": banner.clicks,
-            }
-            for banner in banners
+        report["options"] = [
+            {"id": ad["id"], "title": ad["title"], "sponsor": ad["sponsor"]}
+            for ad in sorted(all_ads, key=lambda ad: ad["title"].lower())
         ]
-
-        return Response(
-            {
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "timezone": str(tz),
-                "ad": {"id": str(selected.id), "title": selected.title} if selected else None,
-                "total_views": total_views,
-                "peak_day": peak,
-                "daily": daily,
-                "ads": ads,
-            }
-        )
+        if report["ad"]:
+            report["ads"] = [ad for ad in all_ads if ad["id"] == report["ad"]["id"]]
+        return Response(report)
