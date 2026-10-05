@@ -1,10 +1,12 @@
 import logging
+import uuid
 
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
+from rest_framework.parsers import FormParser, MultiPartParser
 from django.db import DatabaseError
 from django.db.models import Q, Count, Prefetch, F
 from django.db.utils import OperationalError, ProgrammingError
@@ -87,8 +89,14 @@ from core.permissions import (
     user_is_platform_elevated,
 )
 from sports.access import SportsSubscriptionGuardMixin
+from .roster_import import RosterHeaderError, import_team_roster, roster_template_response
 
 logger = logging.getLogger(__name__)
+
+ROSTER_IMPORT_FORBIDDEN = (
+    "Solo un Super Admin (Nivel 1 o Nivel 2) o el creador del torneo puede cargar "
+    "plantillas de jugadores desde Excel."
+)
 
 
 def _tournament_structure_payload(tournament, phases=None):
@@ -737,6 +745,8 @@ class TeamViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
             "teams",
         ]:
             return [AllowAny()]
+        if self.action in ["import_roster", "import_roster_template"]:
+            return [IsAuthenticated()]
         # Super Admin o miembro de organización pueden crear/editar/eliminar equipos
         return [IsAuthenticated(), IsSportsSuperAdminOrOrgMember()]
 
@@ -786,6 +796,61 @@ class TeamViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
 
         serializer = MatchListSerializer(matches, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], url_path="import-roster-template")
+    def import_roster_template(self, request):
+        """Plantilla de ejemplo (.xlsx) para la carga masiva de jugadores."""
+        if not (
+            _is_sports_super_admin(request.user)
+            or Tournament.objects.filter(posted_by=request.user).exists()
+        ):
+            raise PermissionDenied(ROSTER_IMPORT_FORBIDDEN)
+        return roster_template_response()
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="import-roster",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def import_roster(self, request, slug=None):
+        """
+        Carga masiva de jugadores (CSV/XLSX). Acepta el id (UUID) o el slug del equipo.
+        Permitido a Super Admin L1/L2 y al creador del torneo del equipo.
+        """
+        queryset = Team.objects.select_related("tournament")
+        tournament_slug = request.query_params.get("tournament")
+        if tournament_slug:
+            queryset = queryset.filter(tournament__slug=tournament_slug)
+        try:
+            team = queryset.filter(pk=uuid.UUID(str(slug))).first()
+        except ValueError:
+            team = queryset.filter(slug=slug).first()
+        if team is None:
+            raise NotFound("Equipo no encontrado.")
+
+        is_tournament_owner = team.tournament.posted_by_id == request.user.id
+        if not (_is_sports_super_admin(request.user) or is_tournament_owner):
+            raise PermissionDenied(ROSTER_IMPORT_FORBIDDEN)
+
+        upload = request.FILES.get("file")
+        if not upload:
+            return Response(
+                {"message": "Adjunta el archivo en el campo 'file' (.xlsx o .csv)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            report = import_team_roster(upload=upload, team=team, user=request.user)
+        except RosterHeaderError as exc:
+            return Response(
+                {"message": str(exc), "missing_columns": exc.missing},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ValueError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(report, status=status.HTTP_200_OK)
 
     def perform_create(self, serializer):
         """Asignar posted_by. El equipo queda en la organización del torneo."""

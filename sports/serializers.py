@@ -416,7 +416,7 @@ class PlayerDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Player
-        fields = "__all__"
+        exclude = ["phone"]
 
 
 class PlayerCreateUpdateSerializer(serializers.ModelSerializer):
@@ -433,6 +433,7 @@ class PlayerCreateUpdateSerializer(serializers.ModelSerializer):
             "nickname",
             "id_number",
             "email",
+            "phone",
             "user",
             "jersey_number",
             "position",
