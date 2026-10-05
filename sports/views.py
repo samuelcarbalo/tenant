@@ -2075,7 +2075,7 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
         super().initial(request, *args, **kwargs)
         # Eliminar banners cuya fecha de fin ya expiró (cumplida la fecha de caducidad)
         try:
-            today = timezone.now().date()
+            today = timezone.localdate()
             AdvertisementBanner.objects.filter(end_date__lt=today).delete()
         except Exception:
             pass
@@ -2106,7 +2106,7 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
         # Filtro por activo/inactivo (solo admins ven inactivos)
         active_only = self.request.query_params.get("active")
         if active_only == "true":
-            today = timezone.now().date()
+            today = timezone.localdate()
             queryset = queryset.filter(
                 is_active=True,
                 start_date__lte=today,
@@ -2177,7 +2177,7 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        today = timezone.now().date()
+        today = timezone.localdate()
         banners = AdvertisementBanner.objects.filter(
             position=position,
             is_active=True,
@@ -2237,7 +2237,7 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
         Obtener SOLO banners activos y visibles actualmente
         GET /api/v1/sports/banners/active/
         """
-        today = timezone.now().date()
+        today = timezone.localdate()
         banners = (
             AdvertisementBanner.objects.filter(
                 is_active=True,

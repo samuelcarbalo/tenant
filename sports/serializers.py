@@ -1,6 +1,15 @@
 from datetime import timedelta
+from zoneinfo import ZoneInfo
+
 from django.utils import timezone
 from rest_framework import serializers
+
+# Las fechas sin offset se interpretan siempre en hora de Colombia (UTC-5, sin horario de verano).
+BOGOTA_TZ = ZoneInfo("America/Bogota")
+
+
+def bogota_datetime_field(**kwargs):
+    return serializers.DateTimeField(default_timezone=BOGOTA_TZ, **kwargs)
 
 from core.permissions import user_is_module_super_admin
 from .models import (
@@ -713,18 +722,20 @@ class AssignTeamsToGroupSerializer(serializers.Serializer):
 class GenerateFixtureSerializer(serializers.Serializer):
     phase_id = serializers.UUIDField()
     group_id = serializers.UUIDField(required=False, allow_null=True)
-    match_date = serializers.DateTimeField()
+    match_date = bogota_datetime_field()
     venue = serializers.CharField(required=False, allow_blank=True, default="")
 
 
 class AdvancePhaseSerializer(serializers.Serializer):
     from_phase = serializers.SlugField()
-    match_date = serializers.DateTimeField(required=False, allow_null=True)
+    match_date = bogota_datetime_field(required=False, allow_null=True)
     venue = serializers.CharField(required=False, allow_blank=True, default="")
 
 
 class MatchCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer para crear/actualizar partidos"""
+
+    match_date = bogota_datetime_field()
 
     class Meta:
         model = Match
@@ -981,7 +992,7 @@ class AdvertisementBannerCreateUpdateSerializer(serializers.ModelSerializer):
             if self.instance:
                 start = self.instance.start_date
             else:
-                start = timezone.now().date()
+                start = timezone.localdate()
                 data["start_date"] = start
 
         # Si no se envía end_date, poner automáticamente 30 días después de start_date

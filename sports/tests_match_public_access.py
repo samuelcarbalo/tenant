@@ -1,6 +1,6 @@
 """Detalle público de partidos (finalizados y programados) para visitantes sin sesión."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from unittest import mock
 
 from django.db import DatabaseError
@@ -112,6 +112,29 @@ class MatchPublicAccessTests(TestCase):
         self.scheduled.refresh_from_db()
         self.assertEqual(self.scheduled.venue, "Estadio Nuevo")
         self.assertEqual(self.scheduled.match_date, new_date)
+
+    def test_match_date_is_interpreted_in_bogota_time(self):
+        admin = User.objects.create_user(
+            email="l2tz-partidos@test.com",
+            username="l2tz_partidos",
+            password="SecurePass123!",
+            organization=self.org,
+            admin_level=2,
+        )
+        self.client.force_authenticate(admin)
+        expected_utc = datetime(2026, 10, 6, 4, 0, tzinfo=dt_timezone.utc)
+        for value in ("2026-10-05T23:00:00-05:00", "2026-10-05T23:00"):
+            res = self.client.patch(
+                f"/api/v1/sports/matches/{self.scheduled.id}/",
+                {"match_date": value},
+                format="json",
+            )
+            self.assertEqual(res.status_code, 200, res.content)
+            self.scheduled.refresh_from_db()
+            self.assertEqual(self.scheduled.match_date, expected_utc, value)
+
+        detail = self.client.get(f"/api/v1/sports/matches/{self.scheduled.id}/").json()
+        self.assertEqual(detail["match_date"], "2026-10-05T23:00:00-05:00")
 
     def test_patch_same_teams_is_rejected(self):
         admin = User.objects.create_user(
