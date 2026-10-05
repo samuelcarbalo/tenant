@@ -744,11 +744,16 @@ class MatchCreateUpdateSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, data):
-        # Validar que los equipos pertenezcan al mismo torneo
-        if data["home_team"] == data["away_team"]:
+        # En PATCH parcial los equipos pueden no venir: se validan contra los guardados.
+        home_team = data.get("home_team", getattr(self.instance, "home_team", None))
+        away_team = data.get("away_team", getattr(self.instance, "away_team", None))
+        if home_team is None or away_team is None:
+            return data
+
+        if home_team == away_team:
             raise serializers.ValidationError("Los equipos deben ser diferentes")
 
-        if data["home_team"].tournament != data["away_team"].tournament:
+        if home_team.tournament_id != away_team.tournament_id:
             raise serializers.ValidationError(
                 "Los equipos deben pertenecer al mismo torneo"
             )

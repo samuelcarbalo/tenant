@@ -92,3 +92,39 @@ class MatchPublicAccessTests(TestCase):
             f"/api/v1/sports/matches/{self.scheduled.id}/start_match/", {}, format="json"
         )
         self.assertEqual(res.status_code, 401)
+
+    def test_partial_patch_without_teams_updates_match(self):
+        admin = User.objects.create_user(
+            email="l2-partidos@test.com",
+            username="l2_partidos",
+            password="SecurePass123!",
+            organization=self.org,
+            admin_level=2,
+        )
+        self.client.force_authenticate(admin)
+        new_date = (timezone.now() + timedelta(days=20)).replace(microsecond=0)
+        res = self.client.patch(
+            f"/api/v1/sports/matches/{self.scheduled.id}/",
+            {"match_date": new_date.isoformat(), "venue": "Estadio Nuevo"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        self.scheduled.refresh_from_db()
+        self.assertEqual(self.scheduled.venue, "Estadio Nuevo")
+        self.assertEqual(self.scheduled.match_date, new_date)
+
+    def test_patch_same_teams_is_rejected(self):
+        admin = User.objects.create_user(
+            email="l2b-partidos@test.com",
+            username="l2b_partidos",
+            password="SecurePass123!",
+            organization=self.org,
+            admin_level=2,
+        )
+        self.client.force_authenticate(admin)
+        res = self.client.patch(
+            f"/api/v1/sports/matches/{self.scheduled.id}/",
+            {"away_team": str(self.scheduled.home_team_id)},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 400, res.content)
