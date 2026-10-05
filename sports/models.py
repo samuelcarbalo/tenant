@@ -948,7 +948,7 @@ class AdvertisementBanner(TimeStampedModel):
     @property
     def is_visible(self):
         """Verificar si el banner debe mostrarse según fechas y estado"""
-        today = timezone.now().date()
+        today = timezone.localdate()
         if not self.is_active:
             return False
         if self.start_date and today < self.start_date:
