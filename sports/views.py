@@ -1142,7 +1142,7 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         return MatchDetailSerializer
 
     def get_permissions(self):
-        if self.action in ["list", "retrieve"]:
+        if self.action in ["list", "retrieve", "periods", "lineup"]:
             return [AllowAny()]
         # Super Admin o miembro de organización pueden mutar partidos
         return [IsAuthenticated(), IsSportsSuperAdminOrOrgMember()]
