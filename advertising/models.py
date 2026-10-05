@@ -150,6 +150,41 @@ class ClassifiedAdCampaign(TimeStampedModel):
         return max(0, (self.end_date - timezone.now().date()).days)
 
 
+class AdImpression(models.Model):
+    """
+    Visualización real de un banner (≥ 50 % visible en pantalla, reportada por el cliente).
+    viewed_at se guarda en UTC y se agrupa por día en America/Bogota (TIME_ZONE).
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    ad = models.ForeignKey(
+        "sports.AdvertisementBanner",
+        on_delete=models.CASCADE,
+        related_name="impression_logs",
+    )
+    viewed_at = models.DateTimeField(auto_now_add=True)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ad_impressions",
+    )
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        db_table = "ad_impressions"
+        ordering = ["-viewed_at"]
+        indexes = [
+            models.Index(fields=["viewed_at"]),
+            models.Index(fields=["ad", "viewed_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.ad_id} @ {self.viewed_at:%Y-%m-%d %H:%M}"
+
+
 class AdViewerImpression(TimeStampedModel):
     """Registro de impresiones por espectador (alcance único + frequency cap)."""
 

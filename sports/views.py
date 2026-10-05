@@ -2118,10 +2118,12 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        # Eliminar banners cuya fecha de fin ya expiró (cumplida la fecha de caducidad)
+        # Desactivar (no borrar) banners vencidos: se conserva su historial de impresiones.
         try:
             today = timezone.localdate()
-            AdvertisementBanner.objects.filter(end_date__lt=today).delete()
+            AdvertisementBanner.objects.filter(end_date__lt=today, is_active=True).update(
+                is_active=False
+            )
         except Exception:
             pass
 
@@ -2262,16 +2264,14 @@ class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelVie
             banners = banners.filter(campaign__object_id=object_id)
 
         banner_list = list(banners.order_by("created_at", "display_order")[:limit])
+        # Las impresiones visibles se registran desde el cliente (POST /api/v1/ads/{id}/track-impression/).
+        # Aquí solo se lleva el alcance/frequency cap de las campañas clasificadas.
         if banner_list:
             from advertising.services import record_campaign_impression
 
             banner = banner_list[0]
             if banner.campaign_id and viewer_hash:
                 record_campaign_impression(banner.campaign, viewer_hash[:64])
-            else:
-                AdvertisementBanner.objects.filter(
-                    id__in=[item.id for item in banner_list]
-                ).update(impressions=F("impressions") + 1)
 
         serializer = AdvertisementBannerSerializer(banner_list, many=True)
         return Response(serializer.data)
