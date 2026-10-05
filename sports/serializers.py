@@ -11,7 +11,7 @@ BOGOTA_TZ = ZoneInfo("America/Bogota")
 def bogota_datetime_field(**kwargs):
     return serializers.DateTimeField(default_timezone=BOGOTA_TZ, **kwargs)
 
-from core.permissions import user_is_module_super_admin
+from core.permissions import user_can_edit_team, user_is_module_super_admin
 from .models import (
     Tournament,
     TournamentPhase,
@@ -250,12 +250,18 @@ def _hide_coach_phone(serializer, instance, data):
     return data
 
 
+def _request_user_can_edit_team(serializer, team) -> bool:
+    request = serializer.context.get("request")
+    return user_can_edit_team(getattr(request, "user", None), team)
+
+
 class TeamListSerializer(serializers.ModelSerializer):
     """Serializer para listado de equipos"""
 
     tournament_name = serializers.CharField(source="tournament.name", read_only=True)
     players_count = serializers.IntegerField(source="players.count", read_only=True)
     position = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
 
     class Meta:
         model = Team
@@ -265,6 +271,9 @@ class TeamListSerializer(serializers.ModelSerializer):
             "slug",
             "abbreviation",
             "logo",
+            "primary_color",
+            "secondary_color",
+            "can_edit",
             "tournament",
             "tournament_name",
             "played",
@@ -288,6 +297,9 @@ class TeamListSerializer(serializers.ModelSerializer):
             "coach_phone",
         ]
 
+    def get_can_edit(self, obj):
+        return _request_user_can_edit_team(self, obj)
+
     def get_position(self, obj):
         """Calcular posición en la tabla (orden según deporte)."""
         if obj.tournament.sport_type == "softball":
@@ -309,10 +321,14 @@ class TeamDetailSerializer(serializers.ModelSerializer):
 
     tournament_name = serializers.CharField(source="tournament.name", read_only=True)
     players = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
 
     class Meta:
         model = Team
         fields = "__all__"
+
+    def get_can_edit(self, obj):
+        return _request_user_can_edit_team(self, obj)
 
     def get_players(self, obj):
         """Lista de jugadores activos"""

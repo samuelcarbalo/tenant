@@ -1,3 +1,5 @@
+import uuid
+
 from rest_framework.permissions import SAFE_METHODS
 
 from authentication.sports_subscription import (
@@ -42,6 +44,16 @@ def resolve_related_tournament(request, view):
         )
         if tournament:
             return tournament
+        team_qs = Team.objects.select_related("tournament", "tournament__posted_by")
+        tournament_slug = request.query_params.get("tournament") if hasattr(request, "query_params") else None
+        if tournament_slug:
+            team_qs = team_qs.filter(tournament__slug=tournament_slug)
+        try:
+            team = team_qs.filter(pk=uuid.UUID(str(slug))).first()
+        except ValueError:
+            team = team_qs.filter(slug=slug).first()
+        if team:
+            return team.tournament
 
     pk = kwargs.get("pk")
     if pk:

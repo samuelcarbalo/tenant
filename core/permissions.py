@@ -228,30 +228,77 @@ class IsCoachOfTeam(permissions.BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        # Super Admin Root (is_superuser / admin_level 1 / SUPER_ADMIN): control total
-        if _is_sports_super_admin(request.user):
-            return True
-
-        # Obtener el equipo del jugador
         if hasattr(obj, "team"):
             team = obj.team
         elif hasattr(obj, "coach_email"):
-            # obj es un Team
             team = obj
         else:
-            return False
+            return _is_sports_super_admin(request.user)
+        return user_can_edit_team(request.user, team)
 
-        user = request.user
-        coach_email = (getattr(team, "coach_email", None) or "").strip().lower()
-        user_email = (getattr(user, "email", None) or "").strip().lower()
-        if coach_email and user_email and coach_email == user_email:
-            return True
-        if getattr(team, "posted_by_id", None) == user.id:
-            return True
-        tournament = getattr(team, "tournament", None)
-        if tournament is not None and getattr(tournament, "posted_by_id", None) == user.id:
-            return True
+
+def user_is_team_staff(user, team) -> bool:
+    """Delegado/entrenador (coach_email o quien inscribió el equipo) o capitán registrado."""
+    if not user or not getattr(user, "is_authenticated", False) or team is None:
         return False
+    coach_email = (getattr(team, "coach_email", None) or "").strip().lower()
+    user_email = (getattr(user, "email", None) or "").strip().lower()
+    if coach_email and user_email and coach_email == user_email:
+        return True
+    if getattr(team, "posted_by_id", None) == user.id:
+        return True
+    return team.players.filter(user=user, is_captain=True, is_active=True).exists()
+
+
+def user_is_team_tournament_owner(user, team) -> bool:
+    tournament = getattr(team, "tournament", None)
+    return bool(
+        user
+        and getattr(user, "is_authenticated", False)
+        and tournament is not None
+        and tournament.posted_by_id == user.id
+    )
+
+
+def user_can_edit_team(user, team) -> bool:
+    """
+    Edición completa del equipo (datos, logo, colores y plantilla):
+    Super Admin L1/L2, creador del torneo, delegado/entrenador o capitán del equipo.
+    """
+    if not user or not getattr(user, "is_authenticated", False) or team is None:
+        return False
+    if _is_sports_super_admin(user):
+        return True
+    return user_is_team_tournament_owner(user, team) or user_is_team_staff(user, team)
+
+
+class HasTeamEditPermission(permissions.BasePermission):
+    """PUT/PATCH de equipos: Super Admin L1/L2, creador del torneo, delegado o capitán."""
+
+    message = (
+        "Solo un Super Admin, el creador del torneo o el delegado/capitán del equipo "
+        "puede editar este equipo."
+    )
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        return user_can_edit_team(request.user, obj)
+
+
+class HasTeamDeletePermission(HasTeamEditPermission):
+    """Eliminar equipo: Super Admin L1/L2, creador del torneo o quien inscribió el equipo."""
+
+    message = "Solo un Super Admin, el creador del torneo o quien inscribió el equipo puede eliminarlo."
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        return (
+            _is_sports_super_admin(user)
+            or user_is_team_tournament_owner(user, obj)
+            or obj.posted_by_id == user.id
+        )
 
 
 class IsOrganizationMember(permissions.BasePermission):
