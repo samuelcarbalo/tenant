@@ -361,6 +361,7 @@ class Player(TimeStampedModel):
     nickname = models.CharField(max_length=100, blank=True)
     id_number = models.CharField(max_length=50, blank=True, verbose_name="Cédula")
     email = models.EmailField(blank=True, verbose_name="Correo electrónico")
+    phone = models.CharField(max_length=20, blank=True, verbose_name="Teléfono")
     user = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
