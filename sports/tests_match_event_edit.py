@@ -205,3 +205,57 @@ class MatchEventEditTests(TestCase):
         self.assertEqual(res.status_code, 204, res.content)
         self.match.refresh_from_db()
         self.assertEqual(self.match.home_score, 0)
+
+    def test_owner_can_add_goal_on_finished_match_and_score_updates(self):
+        self.match.status = "finished"
+        self.match.save(update_fields=["status"])
+        self.client.force_authenticate(user=self.owner)
+        res = self.client.post(
+            f"/api/v1/sports/matches/{self.match.id}/events/",
+            {
+                "event_type": "goal",
+                "minute": 88,
+                "team": str(self.home.id),
+                "player": str(self.home_player.id),
+                "description": "Gol de tiro libre",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201, res.content)
+        self.match.refresh_from_db()
+        self.home_player.refresh_from_db()
+        self.assertEqual(self.match.status, "finished")
+        self.assertEqual(self.match.home_score, 2)
+        self.assertEqual(self.match.away_score, 0)
+        self.assertEqual(self.home_player.goals, 2)
+
+    def test_foul_does_not_change_score(self):
+        self.client.force_authenticate(user=self.owner)
+        res = self.client.post(
+            f"/api/v1/sports/matches/{self.match.id}/events/",
+            {
+                "event_type": "foul",
+                "minute": 15,
+                "team": str(self.away.id),
+                "player": str(self.away_player.id),
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, 201, res.content)
+        self.match.refresh_from_db()
+        self.assertEqual(self.match.home_score, 1)
+        self.assertEqual(self.match.away_score, 0)
+
+    def test_outsider_cannot_add_timeline_event(self):
+        self.client.force_authenticate(user=self.outsider)
+        res = self.client.post(
+            f"/api/v1/sports/matches/{self.match.id}/events/",
+            {
+                "event_type": "goal",
+                "minute": 10,
+                "team": str(self.home.id),
+                "player": str(self.home_player.id),
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, 403, res.content)

@@ -1197,6 +1197,7 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
             "destroy",
             "update_score",
             "add_event",
+            "events",
             "start_match",
             "finish_match",
             "record_inning",
@@ -1441,6 +1442,27 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
                 MatchEventSerializer(event).data, status=status.HTTP_201_CREATED
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"], url_path="events", permission_classes=[IsAuthenticated])
+    def events(self, request, pk=None):
+        """
+        Alta manual en la cronología.
+        POST /api/v1/sports/matches/{id}/events/
+        Permitido en partido programado, en curso o finalizado para
+        Super Admin Nivel 1, Nivel 2 o dueño del torneo.
+        """
+        match = self.get_object()
+        if match.status not in ("scheduled", "live", "finished"):
+            return Response(
+                {
+                    "error": (
+                        "Solo puedes registrar eventos en un partido programado, "
+                        "en curso o finalizado."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return self.add_event(request, pk=pk)
 
     def _handle_player_card_event(self, event):
         """Convierte la segunda amarilla del mismo partido en roja y crea suspensión."""
