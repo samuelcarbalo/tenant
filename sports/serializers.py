@@ -570,6 +570,9 @@ class MatchDetailSerializer(serializers.ModelSerializer):
     regulation_innings = serializers.IntegerField(
         source="tournament.regulation_innings", read_only=True
     )
+    # Dueño del torneo (posted_by). El cliente los lee como owner_id / created_by.
+    tournament_owner_id = serializers.UUIDField(source="tournament.posted_by_id", read_only=True)
+    tournament_created_by = serializers.UUIDField(source="tournament.posted_by_id", read_only=True)
     line_score = serializers.SerializerMethodField()
 
     class Meta:
