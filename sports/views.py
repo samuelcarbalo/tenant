@@ -1202,6 +1202,7 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
             "record_inning",
             "set_lineup",
             "clear_lineup",
+            "roster",
             "substitute_player",
             "start_period",
             "pause_period",
@@ -1664,9 +1665,15 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         team_id = request.data.get("team")
         players_data = request.data.get("players", [])
 
-        if match.status not in ("scheduled",):
+        # Programado: alta inicial. Finalizado: corrección por Super Admin o dueño.
+        if match.status not in ("scheduled", "finished"):
             return Response(
-                {"error": "Solo puedes definir alineación antes de iniciar el partido."},
+                {
+                    "error": (
+                        "La planilla solo se puede editar antes del partido "
+                        "o cuando ya finalizó."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1766,6 +1773,22 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         deleted, _ = MatchLineup.objects.filter(match=match, team_id=team_id).delete()
 
         return Response({"deleted": deleted})
+
+    @action(
+        detail=True,
+        methods=["post", "put", "delete"],
+        url_path="roster",
+        permission_classes=[IsAuthenticated],
+    )
+    def roster(self, request, pk=None):
+        """
+        Alta, corrección o baja de la convocatoria de un equipo.
+        POST/PUT /api/v1/sports/matches/{id}/roster/
+        DELETE /api/v1/sports/matches/{id}/roster/?team={id}
+        """
+        if request.method == "DELETE":
+            return self.clear_lineup(request, pk=pk)
+        return self.set_lineup(request, pk=pk)
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def substitute_player(self, request, pk=None):
