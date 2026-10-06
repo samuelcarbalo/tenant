@@ -672,6 +672,7 @@ class MatchEvent(TimeStampedModel):
         ("penalty_missed", "Penal Fallado"),
         ("assist", "Asistencia"),
         ("expelled", "Expulsado"),
+        ("foul", "Falta"),
         # Softbol / béisbol
         ("single", "Sencillo"),
         ("double", "Doble"),
