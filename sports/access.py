@@ -23,6 +23,9 @@ def _tournament_from_obj(obj):
         return None
     if obj.__class__.__name__ == "Tournament":
         return obj
+    if obj.__class__.__name__ == "MatchEvent":
+        match = getattr(obj, "match", None)
+        return getattr(match, "tournament", None)
     return getattr(obj, "tournament", None)
 
 
@@ -30,6 +33,7 @@ def resolve_related_tournament(request, view):
     from sports.models import (
         AdvertisementBanner,
         Match,
+        MatchEvent,
         Player,
         PlayerSuspension,
         Team,
@@ -57,6 +61,15 @@ def resolve_related_tournament(request, view):
 
     pk = kwargs.get("pk")
     if pk:
+        event = (
+            MatchEvent.objects.select_related(
+                "match__tournament", "match__tournament__posted_by"
+            )
+            .filter(pk=pk)
+            .first()
+        )
+        if event:
+            return _tournament_from_obj(event)
         for model in (Team, Player, Match, PlayerSuspension, AdvertisementBanner):
             obj = model.objects.select_related("tournament", "tournament__posted_by").filter(
                 pk=pk

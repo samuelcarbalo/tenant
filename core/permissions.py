@@ -509,6 +509,32 @@ class HasMatchManagementPermission(permissions.BasePermission):
         return user_can_manage_match(request.user, match)
 
 
+class HasMatchEventEditPermission(permissions.BasePermission):
+    """
+    PATCH y DELETE de un evento de la cronología:
+    1. Super Admin Nivel 1 (role SUPER_ADMIN_LEVEL_1 o is_superuser).
+    2. Super Admin Nivel 2 (role SUPER_ADMIN_LEVEL_2).
+    3. Creador / dueño del torneo (owner_id, created_by o posted_by).
+    """
+
+    message = (
+        "Solo un Super Admin (Nivel 1 o Nivel 2) o el creador del torneo "
+        "puede editar o eliminar eventos de este partido."
+    )
+
+    def has_permission(self, request, view):
+        if request.method not in ("PATCH", "DELETE"):
+            return True
+        user = getattr(request, "user", None)
+        return bool(user and user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        if request.method not in ("PATCH", "DELETE"):
+            return True
+        match = getattr(obj, "match", None)
+        return user_can_manage_match(request.user, match)
+
+
 class IsMercadoPagoConfigAdmin(permissions.BasePermission):
     """
     Lectura: staff o superusuario.

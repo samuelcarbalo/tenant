@@ -5,6 +5,7 @@ from .views import (
     TeamViewSet,
     PlayerViewSet,
     MatchViewSet,
+    MatchEventViewSet,
     AdvertisementBannerViewSet,
     PlayerSuspensionViewSet,
 )
@@ -14,6 +15,7 @@ router.register(r"tournaments", TournamentViewSet, basename="tournament")
 router.register(r"teams", TeamViewSet, basename="team")
 router.register(r"players", PlayerViewSet, basename="player")
 router.register(r"matches", MatchViewSet, basename="match")
+router.register(r"match-events", MatchEventViewSet, basename="match-event")
 router.register(r"banners", AdvertisementBannerViewSet, basename="banners")
 router.register(r"player-suspensions", PlayerSuspensionViewSet, basename="player-suspension")
 urlpatterns = [

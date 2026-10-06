@@ -509,6 +509,27 @@ class MatchEventSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {"minute": {"required": False, "allow_null": True}}
 
+    def validate(self, attrs):
+        instance = self.instance
+        if instance is None:
+            return attrs
+
+        player = attrs["player"] if "player" in attrs else instance.player
+        if player is None:
+            return attrs
+
+        match = instance.match
+        if player.team_id not in (match.home_team_id, match.away_team_id):
+            raise serializers.ValidationError(
+                {
+                    "player": (
+                        "El jugador no pertenece a ninguno de los equipos del partido."
+                    )
+                }
+            )
+        attrs["team"] = player.team
+        return attrs
+
 
 class MatchListSerializer(serializers.ModelSerializer):
     """Serializer para listado de partidos"""

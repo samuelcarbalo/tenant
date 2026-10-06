@@ -1,7 +1,7 @@
 import logging
 import uuid
 
-from rest_framework import viewsets, status, filters
+from rest_framework import mixins, viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -64,7 +64,7 @@ from .serializers import (
     AdvancePhaseSerializer,
     PlayerSuspensionSerializer,
 )
-from .scoring import MatchResultService, StandingsService, get_scoring_config
+from .scoring import MatchResultService, StandingsService
 from .formats.templates import get_template, list_templates
 from .services.structure import (
     apply_format_template,
@@ -81,6 +81,7 @@ from .services.advancement import (
 )
 from sports.models import BracketNode
 from core.permissions import (
+    HasMatchEventEditPermission,
     HasMatchManagementPermission,
     HasTeamDeletePermission,
     HasTeamEditPermission,
@@ -1489,70 +1490,16 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         )
 
     def _update_score_from_event(self, event):
-        """Actualizar marcador automáticamente según el evento (solo fútbol).
+        """Sumar el evento al marcador (gol, penal o autogol). Softbol no aplica."""
+        from sports.services.match_events import apply_event_score
 
-        En softbol el marcador proviene del line score por entradas
-        (record_inning); los eventos son solo para el box score.
-        """
-        match = event.match
-        if match.tournament.sport_type == "softball":
-            return
-        if event.event_type != "goal":
-            return
-
-        config = get_scoring_config(match.tournament)
-        home_field, away_field = config["primary_fields"]
-
-        if event.team == match.home_team:
-            current = getattr(match, home_field) or 0
-            setattr(match, home_field, current + 1)
-        elif event.team == match.away_team:
-            current = getattr(match, away_field) or 0
-            setattr(match, away_field, current + 1)
-
-        match.save(
-            update_fields=["home_score", "away_score", "home_runs", "away_runs"]
-        )
+        apply_event_score(event, delta=1)
 
     def _update_player_stats(self, event):
         """Actualizar estadísticas del jugador según el deporte."""
-        player = event.player
-        sport = event.match.tournament.sport_type
+        from sports.services.match_events import apply_event_player_stats
 
-        if sport == "softball":
-            et = event.event_type
-            if et in ("single", "double", "triple", "home_run"):
-                player.hits += 1
-                player.at_bats += 1
-                if et == "home_run":
-                    player.home_runs += 1
-            elif et == "strikeout":
-                player.strikes_out += 1
-                player.at_bats += 1
-            elif et == "out":
-                player.at_bats += 1
-            elif et == "walk":
-                player.walks += 1
-            elif et == "run":
-                player.runs_scored += 1
-            elif et == "rbi":
-                player.rbis += max(1, event.rbi or 0)
-
-            player.batting_average = (
-                player.hits / player.at_bats if player.at_bats > 0 else 0.0
-            )
-            player.save()
-            return
-
-        # Fútbol y otros
-        if event.event_type == "goal":
-            player.goals += 1
-        elif event.event_type == "yellow_card":
-            player.yellow_cards += 1
-        elif event.event_type == "red_card":
-            player.red_cards += 1
-
-        player.save()
+        apply_event_player_stats(event, delta=1)
 
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def start_match(self, request, pk=None):
@@ -2120,6 +2067,133 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
                 for p in periods
             ]
         )
+
+
+class MatchEventViewSet(
+    SportsSubscriptionGuardMixin,
+    viewsets.GenericViewSet,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
+):
+    """
+    Edición y anulación de un evento de la cronología.
+    PATCH / DELETE /api/v1/sports/match-events/{id}/
+    """
+
+    queryset = MatchEvent.objects.select_related(
+        "match",
+        "match__tournament",
+        "match__home_team",
+        "match__away_team",
+        "team",
+        "player",
+    )
+    serializer_class = MatchEventSerializer
+    http_method_names = ["get", "patch", "delete", "head", "options"]
+
+    def get_permissions(self):
+        if self.action in ("partial_update", "destroy"):
+            return [HasMatchEventEditPermission()]
+        return [AllowAny()]
+
+    def partial_update(self, request, *args, **kwargs):
+        event = self.get_object()
+        serializer = self.get_serializer(event, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        new_player = (
+            serializer.validated_data["player"]
+            if "player" in serializer.validated_data
+            else event.player
+        )
+        if new_player is not None and getattr(new_player, "pk", None) != event.player_id:
+            suspended, suspension = is_player_suspended_for_match(new_player, event.match)
+            if suspended:
+                return Response(
+                    {
+                        "error": (
+                            "El jugador está suspendido y no puede participar en este partido "
+                            f"({suspension.get_reason_display() if suspension else 'sanción activa'})."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        with transaction.atomic():
+            locked = self.get_queryset().select_for_update().get(pk=event.pk)
+            before_type = locked.event_type
+            before_player_id = locked.player_id
+            self._reverse_event_effects(locked)
+            serializer.instance = locked
+            updated = serializer.save()
+            updated.match = locked.match
+            self._apply_event_effects(updated)
+            self._sync_card_suspension(
+                before_type=before_type,
+                before_player_id=before_player_id,
+                event=updated,
+                user=request.user,
+            )
+
+        updated = self.get_queryset().get(pk=updated.pk)
+        return Response(MatchEventSerializer(updated).data)
+
+    def destroy(self, request, *args, **kwargs):
+        event = self.get_object()
+        with transaction.atomic():
+            locked = self.get_queryset().select_for_update().get(pk=event.pk)
+            before_type = locked.event_type
+            before_player_id = locked.player_id
+            match_id = locked.match_id
+            self._reverse_event_effects(locked)
+            if before_type == "red_card":
+                from sports.services.match_events import revoke_red_card_suspension
+
+                revoke_red_card_suspension(
+                    player_id=before_player_id,
+                    match_id=match_id,
+                    user=request.user,
+                )
+            locked.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def _reverse_event_effects(self, event):
+        from sports.services.match_events import apply_event_player_stats, apply_event_score
+
+        apply_event_score(event, delta=-1)
+        apply_event_player_stats(event, delta=-1)
+
+    def _apply_event_effects(self, event):
+        from sports.services.match_events import apply_event_player_stats, apply_event_score
+
+        apply_event_score(event, delta=1)
+        apply_event_player_stats(event, delta=1)
+
+    def _sync_card_suspension(self, *, before_type, before_player_id, event, user):
+        from sports.services.match_events import revoke_red_card_suspension
+
+        red_removed = before_type == "red_card" and (
+            event.event_type != "red_card" or event.player_id != before_player_id
+        )
+        if red_removed:
+            revoke_red_card_suspension(
+                player_id=before_player_id,
+                match_id=event.match_id,
+                user=user,
+            )
+
+        became_red = event.event_type == "red_card" and event.player_id and (
+            before_type != "red_card" or before_player_id != event.player_id
+        )
+        if became_red:
+            create_player_suspension(
+                player=event.player,
+                match=event.match,
+                reason="direct_red",
+                notes="Sanción automática por tarjeta roja directa.",
+                created_by=user,
+            )
 
 
 class AdvertisementBannerViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
