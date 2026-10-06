@@ -81,6 +81,7 @@ from .services.advancement import (
 )
 from sports.models import BracketNode
 from core.permissions import (
+    HasMatchManagementPermission,
     HasTeamDeletePermission,
     HasTeamEditPermission,
     IsCoachOfTeam,
@@ -89,6 +90,7 @@ from core.permissions import (
     resolve_request_organization,
     user_can_edit_team,
     user_can_manage_content,
+    user_can_manage_match,
     user_is_team_tournament_owner,
     user_is_platform_elevated,
 )
@@ -1186,10 +1188,33 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
             return MatchCreateUpdateSerializer
         return MatchDetailSerializer
 
+    # Control en vivo, plantilla y cambios de estado del partido.
+    _MATCH_MANAGEMENT_ACTIONS = frozenset(
+        {
+            "update",
+            "partial_update",
+            "destroy",
+            "update_score",
+            "add_event",
+            "start_match",
+            "finish_match",
+            "record_inning",
+            "set_lineup",
+            "clear_lineup",
+            "substitute_player",
+            "start_period",
+            "pause_period",
+            "resume_period",
+            "end_period",
+        }
+    )
+
     def get_permissions(self):
         if self.action in ["list", "retrieve", "periods", "lineup"]:
             return [AllowAny()]
-        # Super Admin o miembro de organización pueden mutar partidos
+        if self.action in self._MATCH_MANAGEMENT_ACTIONS:
+            return [HasMatchManagementPermission()]
+        # Alta de partidos y demás escrituras del módulo
         return [IsAuthenticated(), IsSportsSuperAdminOrOrgMember()]
 
     def _direction_params(self):
@@ -1366,10 +1391,7 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         """Actualizar marcador del partido"""
         match = self.get_object()
 
-        if (
-            not _is_sports_super_admin(request.user)
-            and request.user.organization != match.tournament.organization
-        ):
+        if not user_can_manage_match(request.user, match):
             return Response(
                 {"error": "No tienes permiso para editar este partido"},
                 status=status.HTTP_403_FORBIDDEN,
@@ -1561,10 +1583,7 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         """
         match = self.get_object()
 
-        if (
-            not _is_sports_super_admin(request.user)
-            and request.user.organization != match.tournament.organization
-        ):
+        if not user_can_manage_match(request.user, match):
             return Response(
                 {"error": "No tienes permiso para editar este partido"},
                 status=status.HTTP_403_FORBIDDEN,

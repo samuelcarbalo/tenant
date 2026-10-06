@@ -151,3 +151,52 @@ class MatchPublicAccessTests(TestCase):
             format="json",
         )
         self.assertEqual(res.status_code, 400, res.content)
+
+    def test_match_detail_exposes_tournament_owner(self):
+        res = self.client.get(f"/api/v1/sports/matches/{self.scheduled.id}/")
+        self.assertEqual(res.status_code, 200, res.content)
+        body = res.json()
+        self.assertEqual(str(body["tournament_owner_id"]), str(self.owner.id))
+        self.assertEqual(str(body["tournament_created_by"]), str(self.owner.id))
+
+    def test_tournament_owner_can_start_match(self):
+        self.owner.sports_module_active = True
+        self.owner.sports_module_expires_at = timezone.now() + timedelta(days=30)
+        self.owner.save(update_fields=["sports_module_active", "sports_module_expires_at"])
+        self.client.force_authenticate(self.owner)
+        res = self.client.post(
+            f"/api/v1/sports/matches/{self.scheduled.id}/start_match/", {}, format="json"
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        self.scheduled.refresh_from_db()
+        self.assertEqual(self.scheduled.status, "live")
+
+    def test_org_member_cannot_control_match(self):
+        member = User.objects.create_user(
+            email="miembro-partidos@test.com",
+            username="miembro_partidos",
+            password="SecurePass123!",
+            organization=self.org,
+            role="manager",
+            sports_module_active=True,
+            sports_module_expires_at=timezone.now() + timedelta(days=30),
+        )
+        self.client.force_authenticate(member)
+        res = self.client.post(
+            f"/api/v1/sports/matches/{self.scheduled.id}/start_match/", {}, format="json"
+        )
+        self.assertEqual(res.status_code, 403, res.content)
+
+    def test_superuser_can_start_match(self):
+        root = User.objects.create_user(
+            email="root-partidos@test.com",
+            username="root_partidos",
+            password="SecurePass123!",
+            is_superuser=True,
+            admin_level=1,
+        )
+        self.client.force_authenticate(root)
+        res = self.client.post(
+            f"/api/v1/sports/matches/{self.scheduled.id}/start_match/", {}, format="json"
+        )
+        self.assertEqual(res.status_code, 200, res.content)

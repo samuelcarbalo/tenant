@@ -433,6 +433,82 @@ def _is_sports_super_admin(user) -> bool:
     return user_is_module_super_admin(user)
 
 
+# Alias explícitos pedidos para la gestión en vivo del partido.
+_MATCH_SUPER_ADMIN_L1_ROLES = frozenset(
+    {"SUPER_ADMIN_LEVEL_1", "SUPER_ADMIN_L1", "SUPER_ADMIN"}
+)
+_MATCH_SUPER_ADMIN_L2_ROLES = frozenset(
+    {"SUPER_ADMIN_LEVEL_2", "SUPER_ADMIN_L2"}
+)
+
+
+def user_is_match_super_admin(user) -> bool:
+    """
+    Super Admin que puede dirigir un partido en vivo:
+    - Nivel 1: role/hierarchy SUPER_ADMIN_LEVEL_1 (o alias) o is_superuser.
+    - Nivel 2: role/hierarchy SUPER_ADMIN_LEVEL_2 (o alias) o admin_level == 2.
+    """
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    if getattr(user, "is_superuser", False) or user_is_super_admin_l1(user):
+        return True
+    role = _role_token(getattr(user, "role", None))
+    hierarchy = _role_token(getattr(user, "hierarchy_role", None))
+    if role in _MATCH_SUPER_ADMIN_L1_ROLES or hierarchy in _MATCH_SUPER_ADMIN_L1_ROLES:
+        return True
+    if user_is_super_admin_l2(user):
+        return True
+    return role in _MATCH_SUPER_ADMIN_L2_ROLES or hierarchy in _MATCH_SUPER_ADMIN_L2_ROLES
+
+
+def _same_user_id(left, right) -> bool:
+    if left is None or right is None or left == "" or right == "":
+        return False
+    return str(left) == str(right)
+
+
+def user_can_manage_match(user, match) -> bool:
+    """
+    Gestión en vivo del partido y de su plantilla:
+    Super Admin Nivel 1, Super Admin Nivel 2 o creador/dueño del torneo.
+    El dueño es tournament.posted_by (owner_id / created_by si existieran).
+    """
+    if not user or not getattr(user, "is_authenticated", False) or match is None:
+        return False
+    if user_is_match_super_admin(user):
+        return True
+    tournament = getattr(match, "tournament", None)
+    if tournament is None:
+        return False
+    user_id = getattr(user, "id", None)
+    owner_ids = (
+        getattr(tournament, "posted_by_id", None),
+        getattr(tournament, "owner_id", None),
+        getattr(tournament, "created_by_id", None),
+    )
+    return any(_same_user_id(owner_id, user_id) for owner_id in owner_ids)
+
+
+class HasMatchManagementPermission(permissions.BasePermission):
+    """
+    POST/PATCH/PUT/DELETE de control del partido:
+    Super Admin Nivel 1, Super Admin Nivel 2 o dueño del torneo.
+    """
+
+    message = (
+        "Solo un Super Admin (Nivel 1 o Nivel 2) o el creador del torneo "
+        "puede gestionar este partido."
+    )
+
+    def has_permission(self, request, view):
+        user = getattr(request, "user", None)
+        return bool(user and user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        match = getattr(obj, "match", None) if not hasattr(obj, "home_team_id") else obj
+        return user_can_manage_match(request.user, match)
+
+
 class IsMercadoPagoConfigAdmin(permissions.BasePermission):
     """
     Lectura: staff o superusuario.
