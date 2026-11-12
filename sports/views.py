@@ -309,14 +309,14 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         elif phase_slug:
             phase = tournament.phases.filter(slug=phase_slug).first()
 
-        if group_id:
-            group = CompetitionGroup.objects.filter(
-                id=group_id, phase__tournament=tournament
-            ).first()
-        elif group_slug:
-            group = CompetitionGroup.objects.filter(
-                slug=group_slug, phase__tournament=tournament
-            ).first()
+        if group_id or group_slug:
+            group_qs = CompetitionGroup.objects.filter(phase__tournament=tournament)
+            if phase is not None:
+                group_qs = group_qs.filter(phase=phase)
+            if group_id:
+                group = group_qs.filter(id=group_id).first()
+            else:
+                group = group_qs.filter(slug=group_slug).first()
 
         standings = StandingsService.compute(tournament, phase=phase, group=group)
         serializer = StandingsSerializer(standings, many=True)

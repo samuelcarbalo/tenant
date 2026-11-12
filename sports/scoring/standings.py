@@ -3,7 +3,7 @@ from functools import cmp_to_key
 
 from django.db.models import Q
 
-from sports.models import Match, Team
+from sports.models import GroupMembership, Match, Team
 
 from .config import get_scoring_config
 from .match_result import MatchResultService
@@ -82,15 +82,50 @@ class StandingsService:
 
     @staticmethod
     def _get_matches_in_scope(tournament, phase=None, group=None):
+        """
+        Partidos finalizados del alcance pedido.
+
+        Un partido cuenta en el grupo si está ligado a ese grupo, o si ambos
+        equipos pertenecen al grupo y el partido no es de eliminatoria. Así la
+        tabla del grupo refleja resultados que quedaron solo en la tabla general.
+        """
         qs = Match.objects.filter(
             tournament=tournament,
             status="finished",
         ).select_related("home_team", "away_team")
 
-        if phase is not None:
-            qs = qs.filter(phase=phase)
         if group is not None:
-            qs = qs.filter(group=group)
+            member_ids = list(group.memberships.values_list("team_id", flat=True))
+            return qs.filter(
+                Q(group=group)
+                | (
+                    Q(group__isnull=True)
+                    & Q(home_team_id__in=member_ids)
+                    & Q(away_team_id__in=member_ids)
+                    & ~Q(match_type="knockout")
+                    & (Q(phase_id=group.phase_id) | Q(phase__isnull=True))
+                )
+            )
+
+        if phase is not None:
+            if phase.phase_type == "knockout":
+                return qs.filter(phase=phase)
+            member_ids = list(
+                GroupMembership.objects.filter(group__phase=phase).values_list(
+                    "team_id", flat=True
+                )
+            )
+            scoped = Q(phase=phase)
+            if member_ids:
+                scoped |= (
+                    Q(phase__isnull=True)
+                    & Q(home_team_id__in=member_ids)
+                    & Q(away_team_id__in=member_ids)
+                    & ~Q(match_type="knockout")
+                )
+            elif not phase.groups.exists():
+                scoped |= Q(phase__isnull=True) & ~Q(match_type="knockout")
+            return qs.filter(scoped)
 
         return qs
 

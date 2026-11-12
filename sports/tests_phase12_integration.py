@@ -170,6 +170,85 @@ class Phase12IntegrationTests(TestCase):
         self.assertEqual(len(st_b), 2)
         self.assertEqual(st_b[0]["played"], 0)
 
+    def test_group_standings_count_finished_matches_missing_group_link(self):
+        tournament = Tournament.objects.create(
+            name="Tabla Grupo",
+            slug="tabla-grupo",
+            sport_type="football",
+            organization=self.org,
+            posted_by=self.user,
+            start_date="2026-07-01",
+            end_date="2026-08-01",
+        )
+        apply_format_template(tournament, "multi_quadrangular", group_count=2)
+        phase = tournament.phases.get()
+        group_a, group_b = list(phase.groups.order_by("order"))
+        teams = [
+            Team.objects.create(
+                name=f"Equipo {i}",
+                slug=f"tabla-eq-{i}",
+                abbreviation=f"T{i}",
+                tournament=tournament,
+                organization=self.org,
+                posted_by=self.user,
+            )
+            for i in range(1, 5)
+        ]
+        assign_teams_to_group(group_a, [teams[0].id, teams[1].id])
+        assign_teams_to_group(group_b, [teams[2].id, teams[3].id])
+        Match.objects.create(
+            tournament=tournament,
+            posted_by=self.user,
+            home_team=teams[0],
+            away_team=teams[1],
+            match_date=timezone.now(),
+            phase=phase,
+            group=None,
+            match_type="legacy",
+            status="finished",
+            home_score=2,
+            away_score=0,
+        )
+        Match.objects.create(
+            tournament=tournament,
+            posted_by=self.user,
+            home_team=teams[0],
+            away_team=teams[1],
+            match_date=timezone.now(),
+            phase=None,
+            group=None,
+            match_type="legacy",
+            status="finished",
+            home_score=1,
+            away_score=1,
+        )
+        Match.objects.create(
+            tournament=tournament,
+            posted_by=self.user,
+            home_team=teams[0],
+            away_team=teams[1],
+            match_date=timezone.now(),
+            phase=None,
+            group=None,
+            match_type="knockout",
+            status="finished",
+            home_score=4,
+            away_score=0,
+        )
+
+        group_a_table = StandingsService.compute(tournament, phase=phase, group=group_a)
+        group_b_table = StandingsService.compute(tournament, phase=phase, group=group_b)
+        general = StandingsService.compute(tournament)
+
+        played_a = {row["team"].id: row["played"] for row in group_a_table}
+        points_a = {row["team"].id: row["points"] for row in group_a_table}
+        self.assertEqual(played_a[teams[0].id], 2)
+        self.assertEqual(played_a[teams[1].id], 2)
+        self.assertEqual(points_a[teams[0].id], 4)
+        self.assertEqual(points_a[teams[1].id], 1)
+        self.assertTrue(all(row["played"] == 0 for row in group_b_table))
+        self.assertEqual(sum(row["played"] for row in general), 6)
+
     def test_liga_simple_is_a_single_table_without_groups(self):
         league = Tournament.objects.create(
             name="Liga Simple",
