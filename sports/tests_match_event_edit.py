@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 
 from authentication.models import User
 from organizations.models import Organization
-from sports.models import Match, MatchEvent, Player, Team, Tournament
+from sports.models import Match, MatchEvent, Player, PlayerSuspension, Team, Tournament
 
 
 class MatchEventEditTests(TestCase):
@@ -259,3 +259,89 @@ class MatchEventEditTests(TestCase):
             format="json",
         )
         self.assertEqual(res.status_code, 403, res.content)
+
+    def test_owner_can_reassign_yellow_card_on_finished_match(self):
+        self.match.status = "finished"
+        self.match.save(update_fields=["status"])
+        self.home_player.yellow_cards = 1
+        self.home_player.save(update_fields=["yellow_cards"])
+        correct_player = Player.objects.create(
+            first_name="Marta",
+            last_name="Tarjeta",
+            jersey_number=4,
+            posted_by=self.owner,
+            team=self.home,
+            tournament=self.tournament,
+            yellow_cards=0,
+        )
+        yellow = MatchEvent.objects.create(
+            posted_by=self.owner,
+            match=self.match,
+            team=self.home,
+            player=self.home_player,
+            event_type="yellow_card",
+            minute=41,
+        )
+        self.client.force_authenticate(user=self.owner)
+        res = self.client.patch(
+            self._url(yellow),
+            {"player": str(correct_player.id)},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(str(res.data["player"]), str(correct_player.id))
+        self.match.refresh_from_db()
+        self.home_player.refresh_from_db()
+        correct_player.refresh_from_db()
+        self.assertEqual(self.match.status, "finished")
+        self.assertEqual(self.match.home_score, 1)
+        self.assertEqual(self.home_player.yellow_cards, 0)
+        self.assertEqual(correct_player.yellow_cards, 1)
+
+    def test_owner_can_correct_finished_score_without_reserving_suspension(self):
+        finished_at = timezone.now() - timedelta(days=1)
+        self.match.status = "finished"
+        self.match.finished_at = finished_at
+        self.match.home_score = 1
+        self.match.away_score = 0
+        self.match.save(update_fields=["status", "finished_at", "home_score", "away_score"])
+        later = Match.objects.create(
+            tournament=self.tournament,
+            posted_by=self.owner,
+            home_team=self.home,
+            away_team=self.away,
+            match_date=timezone.now() + timedelta(days=2),
+            status="scheduled",
+        )
+        suspension = PlayerSuspension.objects.create(
+            player=self.home_player,
+            tournament=self.tournament,
+            match=self.match,
+            suspended_until_match=later,
+            reason="manual",
+            matches_count=1,
+            matches_served=0,
+            is_active=True,
+            created_by=self.owner,
+        )
+        self.client.force_authenticate(user=self.level2)
+        res = self.client.post(
+            f"/api/v1/sports/matches/{self.match.id}/update_score/",
+            {"home_score": 3, "away_score": 1},
+            format="json",
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        self.match.refresh_from_db()
+        suspension.refresh_from_db()
+        self.home.refresh_from_db()
+        self.away.refresh_from_db()
+        self.assertEqual(self.match.status, "finished")
+        self.assertEqual(self.match.home_score, 3)
+        self.assertEqual(self.match.away_score, 1)
+        self.assertEqual(self.match.finished_at, finished_at)
+        self.assertEqual(suspension.matches_served, 0)
+        self.assertTrue(suspension.is_active)
+        self.assertEqual(self.home.points, 3)
+        self.assertEqual(self.home.goals_for, 3)
+        self.assertEqual(self.away.goals_for, 1)
+        self.assertEqual(self.away.points, 0)
