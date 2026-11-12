@@ -188,3 +188,71 @@ class Phase1And2IntegrationTests(TestCase):
         self.assertEqual(t.structure_mode, "structured")
         self.assertEqual(t.phases.count(), 1)
         self.assertEqual(t.phases.first().groups.count(), 1)
+
+    def test_group_capacity_is_editable_at_creation_and_later(self):
+        created = self.client.post(
+            "/api/v1/sports/tournaments/",
+            {
+                "name": "Grupos de seis",
+                "slug": "grupos-de-seis",
+                "description": "",
+                "sport_type": "football",
+                "start_date": "2026-07-01",
+                "end_date": "2026-08-01",
+                "max_teams": 12,
+                "min_players_per_team": 7,
+                "max_players_per_team": 20,
+                "format_template": "multi_quadrangular",
+                "format_group_count": 2,
+                "format_teams_per_group": 6,
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        tournament = Tournament.objects.get(slug="grupos-de-seis")
+        groups = list(tournament.phases.get().groups.order_by("order"))
+        self.assertEqual([group.max_teams for group in groups], [6, 6])
+
+        fixed = Tournament.objects.create(
+            name="Cupo editable",
+            slug="cupo-editable",
+            sport_type="football",
+            organization=self.org,
+            posted_by=self.user,
+            start_date="2026-07-01",
+            end_date="2026-08-01",
+            max_teams=8,
+        )
+        apply_format_template(fixed, "single_day_quadrangular")
+        group = fixed.phases.first().groups.first()
+        self.assertEqual(group.max_teams, 4)
+        teams = [
+            Team.objects.create(
+                name=f"Club {i}",
+                slug=f"club-cupo-{i}",
+                abbreviation=f"C{i}",
+                tournament=fixed,
+                organization=self.org,
+                posted_by=self.user,
+            )
+            for i in range(1, 6)
+        ]
+        blocked = self.client.post(
+            f"/api/v1/sports/tournaments/{fixed.slug}/assign_group_teams/",
+            {"group_id": str(group.id), "team_ids": [str(team.id) for team in teams]},
+            format="json",
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        updated = self.client.post(
+            f"/api/v1/sports/tournaments/{fixed.slug}/assign_group_teams/",
+            {
+                "group_id": str(group.id),
+                "team_ids": [str(team.id) for team in teams],
+                "max_teams": 6,
+            },
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        group.refresh_from_db()
+        self.assertEqual(group.max_teams, 6)
+        self.assertEqual(group.memberships.count(), 5)

@@ -269,6 +269,7 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
         user = self.request.user
         format_template = serializer.validated_data.pop("format_template", "") or self.request.data.get("format_template", "")
         format_group_count = serializer.validated_data.pop("format_group_count", 1)
+        format_teams_per_group = serializer.validated_data.pop("format_teams_per_group", None)
 
         with transaction.atomic():
             org = resolve_request_organization(self.request)
@@ -289,6 +290,7 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
                     tournament,
                     format_template,
                     group_count=max(1, int(format_group_count or 1)),
+                    teams_per_group=format_teams_per_group,
                 )
 
     @action(detail=True, methods=["get"], permission_classes=[AllowAny])
@@ -324,7 +326,7 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     def format_templates(self, request):
         """Plantillas de formato disponibles (cacheadas 1 h)."""
         sport_type = request.query_params.get("sport_type") or "all"
-        cache_key = f"sports:format_templates:v3:{sport_type}"
+        cache_key = f"sports:format_templates:v4:{sport_type}"
         data = cache.get(cache_key)
         if data is None:
             data = list_templates(
@@ -383,6 +385,10 @@ class TournamentViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
                 {"error": "Todos los equipos deben pertenecer al torneo"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        requested_max = serializer.validated_data.get("max_teams")
+        if requested_max is not None:
+            group.max_teams = requested_max
+            group.save(update_fields=["max_teams"])
         if len(team_ids) > group.max_teams:
             return Response(
                 {"error": f"Máximo {group.max_teams} equipos en este grupo"},

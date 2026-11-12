@@ -14,7 +14,7 @@ FORMAT_TEMPLATES = {
     "single_day_quadrangular": {
         "id": "single_day_quadrangular",
         "label": "Cuadrangular (1 día)",
-        "description": "Un solo grupo de 4 equipos, todos contra todos en un día. No se crean grupos adicionales.",
+        "description": "Un solo grupo, todos contra todos en un día. Tú eliges cuántos equipos caben. No se crean grupos adicionales.",
         "sport_types": ["softball", "football", "basketball", "volleyball"],
         "structure_mode": "structured",
         "grouping": "fixed_group",
@@ -34,7 +34,7 @@ FORMAT_TEMPLATES = {
     "multi_quadrangular": {
         "id": "multi_quadrangular",
         "label": "Varios grupos (sin playoffs)",
-        "description": "Primera fase dividida en grupos de 4 (A, B, C…). Cada grupo juega todos contra todos y tiene su tabla. No hay fase eliminatoria. El calendario solo enfrenta equipos del mismo grupo.",
+        "description": "Primera fase dividida en grupos (A, B, C…). Tú eliges cuántos equipos caben en cada uno. Cada grupo juega todos contra todos y tiene su tabla. No hay fase eliminatoria.",
         "sport_types": ["softball", "football"],
         "structure_mode": "structured",
         "grouping": "multi_group",
@@ -73,7 +73,7 @@ FORMAT_TEMPLATES = {
     "single_quadrangular_final": {
         "id": "single_quadrangular_final",
         "label": "Cuadrangular + Final",
-        "description": "Un solo grupo de 4. Todos contra todos y luego final entre los 2 primeros. No admite varios grupos.",
+        "description": "Un solo grupo. Todos contra todos y luego final entre los 2 primeros. Tú eliges cuántos equipos caben. No admite varios grupos.",
         "sport_types": ["softball", "football"],
         "structure_mode": "structured",
         "grouping": "fixed_group",
@@ -113,7 +113,7 @@ FORMAT_TEMPLATES = {
     "multi_quadrangular_knockout": {
         "id": "multi_quadrangular_knockout",
         "label": "Fase de grupos + playoffs",
-        "description": "Elige cuántos grupos de 4 quieres (A, B, C…). Por defecto clasifican 2 por grupo a la eliminatoria. Puedes agregar una segunda fase de grupos (1 o 2) antes de los playoffs.",
+        "description": "Elige cuántos grupos quieres (A, B, C…) y cuántos equipos caben en cada uno. Por defecto clasifican 2 por grupo a la eliminatoria. Puedes agregar una segunda fase de grupos antes de los playoffs.",
         "supports_second_group_phase": True,
         "sport_types": ["softball", "football"],
         "structure_mode": "structured",
