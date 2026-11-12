@@ -17,23 +17,40 @@ from sports.models import (
 )
 
 
-def apply_format_template(tournament: Tournament, template_id: str, group_count: int = 1):
+def _teams_per_group_override(teams_per_group):
+    if teams_per_group in (None, ""):
+        return None
+    return min(32, max(2, int(teams_per_group)))
+
+
+def apply_format_template(
+    tournament: Tournament,
+    template_id: str,
+    group_count: int = 1,
+    teams_per_group=None,
+):
     """Crea fases y grupos según plantilla."""
     template = get_template(template_id)
     if not template:
         return
 
+    override = _teams_per_group_override(teams_per_group)
     tournament.structure_mode = template.get("structure_mode", "structured")
     tournament.format_template = template_id
     auto_phases = [p for p in template.get("phases", []) if p.get("groups_auto")]
+    has_groups = any(
+        phase.get("groups_auto") or phase.get("groups") for phase in template.get("phases", [])
+    )
     if auto_phases:
-        teams_per = auto_phases[0].get("config", {}).get("teams_per_group", 4)
+        teams_per = override or auto_phases[0].get("config", {}).get("teams_per_group", 4)
         requested = max(1, int(group_count or 1))
         if template.get("dynamic_playoff"):
             group_count = min(16, max(2, requested))
         else:
             group_count = min(16, requested)
         tournament.max_teams = group_count * teams_per
+    elif override and has_groups:
+        tournament.max_teams = override
     elif template.get("default_max_teams"):
         tournament.max_teams = template["default_max_teams"]
     tournament.save(
@@ -53,7 +70,12 @@ def apply_format_template(tournament: Tournament, template_id: str, group_count:
         )
 
         if phase_def.get("groups_auto"):
-            teams_per = phase_def.get("config", {}).get("teams_per_group", 4)
+            teams_per = override or phase_def.get("config", {}).get("teams_per_group", 4)
+            if override:
+                config = dict(phase.config or {})
+                config["teams_per_group"] = teams_per
+                phase.config = config
+                phase.save(update_fields=["config"])
             for i in range(group_count):
                 letter = chr(ord("A") + i)
                 CompetitionGroup.objects.create(
@@ -70,8 +92,13 @@ def apply_format_template(tournament: Tournament, template_id: str, group_count:
                     name=group_def["name"],
                     slug=group_def["slug"],
                     order=idx,
-                    max_teams=group_def.get("max_teams", 4),
+                    max_teams=override or group_def.get("max_teams", 4),
                 )
+            if override and phase_def.get("groups"):
+                config = dict(phase.config or {})
+                config["teams_per_group"] = override
+                phase.config = config
+                phase.save(update_fields=["config"])
 
         if phase_def.get("phase_type") == "knockout" or phase_def.get("bracket"):
             _create_bracket_for_phase(phase, phase_def.get("bracket", {}))

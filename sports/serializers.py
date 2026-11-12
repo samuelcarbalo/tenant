@@ -81,6 +81,9 @@ class PlayerSuspensionSerializer(serializers.ModelSerializer):
 class TournamentCreateSerializer(serializers.ModelSerializer):
     format_template = serializers.CharField(required=False, allow_blank=True, default="")
     format_group_count = serializers.IntegerField(required=False, default=1, write_only=True)
+    format_teams_per_group = serializers.IntegerField(
+        required=False, allow_null=True, write_only=True, min_value=2, max_value=32
+    )
 
     class Meta:
         model = Tournament
@@ -102,6 +105,7 @@ class TournamentCreateSerializer(serializers.ModelSerializer):
             "structure_mode",
             "format_template",
             "format_group_count",
+            "format_teams_per_group",
             "scoring_config",
             "rules_url",
             "lineup_size",
@@ -761,6 +765,7 @@ class AssignTeamsToGroupSerializer(serializers.Serializer):
     team_ids = serializers.ListField(
         child=serializers.UUIDField(), allow_empty=False
     )
+    max_teams = serializers.IntegerField(required=False, min_value=2, max_value=32)
 
 
 class GenerateFixtureSerializer(serializers.Serializer):
