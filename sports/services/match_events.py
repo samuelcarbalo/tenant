@@ -108,6 +108,30 @@ def _apply_softball_stats(player, event, delta):
     )
 
 
+def refresh_finished_match_results(match, previous_home=None, previous_away=None):
+    """
+    Si el partido ya terminó y el marcador cambió, recalcula la tabla y el cuadro.
+    Una corrección de tarjeta que no mueve el marcador no toca la clasificación.
+    """
+    match.refresh_from_db()
+    if match.status != "finished":
+        return match
+
+    if previous_home is not None and previous_away is not None:
+        if (match.home_score or 0) == (previous_home or 0) and (match.away_score or 0) == (
+            previous_away or 0
+        ):
+            return match
+
+    from sports.scoring.match_result import MatchResultService
+    from sports.services.advancement import propagate_bracket_after_match
+
+    MatchResultService.recalculate_team_aggregates(match.home_team)
+    MatchResultService.recalculate_team_aggregates(match.away_team)
+    propagate_bracket_after_match(match)
+    return match
+
+
 def revoke_red_card_suspension(*, player_id, match_id, user):
     """Anula la sanción automática ligada a una roja que se corrige o se borra."""
     if not player_id or not match_id:

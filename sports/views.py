@@ -1400,15 +1400,20 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        already_finished = match.status == "finished"
         try:
             score_data = MatchResultService.normalize_scores_from_request(
                 match, request.data
             )
-            match.status = "finished"
-            match.finished_at = timezone.now()
-            match.save(update_fields=["status", "finished_at"])
+            if not already_finished:
+                match.status = "finished"
+                if not match.finished_at:
+                    match.finished_at = timezone.now()
+                match.save(update_fields=["status", "finished_at"])
             MatchResultService.finalize_match(match, score_data)
-            process_suspensions_on_match_finish(match)
+            # Corregir el marcador de un partido ya cerrado no vuelve a descontar fechas.
+            if not already_finished:
+                process_suspensions_on_match_finish(match)
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1418,10 +1423,13 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def add_event(self, request, pk=None):
         match = self.get_object()
+        previous_home = match.home_score
+        previous_away = match.away_score
         serializer = MatchEventSerializer(data=request.data)
         if serializer.is_valid():
             player = serializer.validated_data.get("player")
-            if player:
+            # En un partido ya finalizado se corrige el acta: la sanción no bloquea el registro.
+            if player and match.status != "finished":
                 suspended, suspension = is_player_suspended_for_match(player, match)
                 if suspended:
                     return Response(
@@ -1438,6 +1446,9 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
             if event.player and event.event_type not in {"yellow_card", "red_card"}:
                 self._update_player_stats(event)
             self._update_score_from_event(event)
+            from sports.services.match_events import refresh_finished_match_results
+
+            refresh_finished_match_results(match, previous_home, previous_away)
             return Response(
                 MatchEventSerializer(event).data, status=status.HTTP_201_CREATED
             )
@@ -2152,7 +2163,12 @@ class MatchEventViewSet(
             if "player" in serializer.validated_data
             else event.player
         )
-        if new_player is not None and getattr(new_player, "pk", None) != event.player_id:
+        correcting_finished = event.match.status == "finished"
+        if (
+            not correcting_finished
+            and new_player is not None
+            and getattr(new_player, "pk", None) != event.player_id
+        ):
             suspended, suspension = is_player_suspended_for_match(new_player, event.match)
             if suspended:
                 return Response(
@@ -2165,6 +2181,8 @@ class MatchEventViewSet(
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        previous_home = event.match.home_score
+        previous_away = event.match.away_score
         with transaction.atomic():
             locked = self.get_queryset().select_for_update().get(pk=event.pk)
             before_type = locked.event_type
@@ -2181,11 +2199,17 @@ class MatchEventViewSet(
                 user=request.user,
             )
 
+        from sports.services.match_events import refresh_finished_match_results
+
+        refresh_finished_match_results(updated.match, previous_home, previous_away)
         updated = self.get_queryset().get(pk=updated.pk)
         return Response(MatchEventSerializer(updated).data)
 
     def destroy(self, request, *args, **kwargs):
         event = self.get_object()
+        match = event.match
+        previous_home = match.home_score
+        previous_away = match.away_score
         with transaction.atomic():
             locked = self.get_queryset().select_for_update().get(pk=event.pk)
             before_type = locked.event_type
@@ -2201,6 +2225,9 @@ class MatchEventViewSet(
                     user=request.user,
                 )
             locked.delete()
+        from sports.services.match_events import refresh_finished_match_results
+
+        refresh_finished_match_results(match, previous_home, previous_away)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def _reverse_event_effects(self, event):
