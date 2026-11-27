@@ -2200,7 +2200,8 @@ class MatchEventViewSet(
         previous_home = event.match.home_score
         previous_away = event.match.away_score
         with transaction.atomic():
-            locked = self.get_queryset().select_for_update().get(pk=event.pk)
+            # of=("self",): player es nullable; FOR UPDATE + OUTER JOIN falla en Postgres.
+            locked = self.get_queryset().select_for_update(of=("self",)).get(pk=event.pk)
             before_type = locked.event_type
             before_player_id = locked.player_id
             self._reverse_event_effects(locked)
@@ -2227,7 +2228,8 @@ class MatchEventViewSet(
         previous_home = match.home_score
         previous_away = match.away_score
         with transaction.atomic():
-            locked = self.get_queryset().select_for_update().get(pk=event.pk)
+            # of=("self",): player es nullable; FOR UPDATE + OUTER JOIN falla en Postgres.
+            locked = self.get_queryset().select_for_update(of=("self",)).get(pk=event.pk)
             before_type = locked.event_type
             before_player_id = locked.player_id
             match_id = locked.match_id
