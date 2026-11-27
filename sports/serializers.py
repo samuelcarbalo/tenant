@@ -213,6 +213,7 @@ class TournamentListSerializer(serializers.ModelSerializer):
             "status",
             "status_display",
             "logo",
+            "banner",
             "teams_count",
             "matches_count",
             "posted_by",
