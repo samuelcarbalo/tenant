@@ -489,6 +489,19 @@ def user_can_manage_match(user, match) -> bool:
     return any(_same_user_id(owner_id, user_id) for owner_id in owner_ids)
 
 
+def _resolve_match_from_view(view):
+    """Resuelve el partido desde la URL del ViewSet (pk de Match)."""
+    pk = (getattr(view, "kwargs", None) or {}).get("pk")
+    if not pk:
+        return None
+    try:
+        from sports.models import Match
+
+        return Match.objects.select_related("tournament").filter(pk=pk).first()
+    except Exception:
+        return None
+
+
 class HasMatchManagementPermission(permissions.BasePermission):
     """
     POST/PATCH/PUT/DELETE de control del partido:
@@ -502,10 +515,19 @@ class HasMatchManagementPermission(permissions.BasePermission):
 
     def has_permission(self, request, view):
         user = getattr(request, "user", None)
-        return bool(user and user.is_authenticated)
+        if not user or not user.is_authenticated:
+            return False
+        # Validar ya en has_permission para no depender solo de get_object().
+        match = _resolve_match_from_view(view)
+        if match is None:
+            return True
+        return user_can_manage_match(user, match)
 
     def has_object_permission(self, request, view, obj):
-        match = getattr(obj, "match", None) if not hasattr(obj, "home_team_id") else obj
+        if hasattr(obj, "home_team_id") and hasattr(obj, "tournament_id"):
+            match = obj
+        else:
+            match = getattr(obj, "match", None)
         return user_can_manage_match(request.user, match)
 
 

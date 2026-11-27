@@ -1429,6 +1429,11 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def add_event(self, request, pk=None):
         match = self.get_object()
+        if not user_can_manage_match(request.user, match):
+            return Response(
+                {"error": "No tienes permiso para editar este partido"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         previous_home = match.home_score
         previous_away = match.away_score
         serializer = MatchEventSerializer(data=request.data)
@@ -1545,6 +1550,11 @@ class MatchViewSet(SportsSubscriptionGuardMixin, viewsets.ModelViewSet):
     def start_match(self, request, pk=None):
         """Iniciar partido (cambiar estado a 'live')"""
         match = self.get_object()
+        if not user_can_manage_match(request.user, match):
+            return Response(
+                {"error": "No tienes permiso para editar este partido"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         match.status = "live"
         match.started_at = timezone.now()
         match.save()

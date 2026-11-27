@@ -105,6 +105,35 @@ def request_can_write_sports(request, view) -> bool:
     owner = getattr(tournament, "posted_by", None) if tournament else None
     if owner and user_has_active_sports_module(owner):
         return True
+    # Super Admin L1/L2 y dueño del torneo: no bloquear por suscripción
+    # si ya tienen permiso de gestión del partido.
+    try:
+        from core.permissions import user_can_manage_match, user_is_match_super_admin
+        from sports.models import Match
+
+        if user_is_match_super_admin(user):
+            return True
+        pk = (getattr(view, "kwargs", None) or {}).get("pk")
+        if pk and getattr(view, "__class__", type).__name__ in {
+            "MatchViewSet",
+            "MatchEventViewSet",
+        }:
+            if view.__class__.__name__ == "MatchEventViewSet":
+                from sports.models import MatchEvent
+
+                event = (
+                    MatchEvent.objects.select_related("match__tournament")
+                    .filter(pk=pk)
+                    .first()
+                )
+                if event and user_can_manage_match(user, event.match):
+                    return True
+            else:
+                match = Match.objects.select_related("tournament").filter(pk=pk).first()
+                if match and user_can_manage_match(user, match):
+                    return True
+    except Exception:
+        pass
     return False
 
 
