@@ -158,6 +158,25 @@ class MatchPublicAccessTests(TestCase):
         body = res.json()
         self.assertEqual(str(body["tournament_owner_id"]), str(self.owner.id))
         self.assertEqual(str(body["tournament_created_by"]), str(self.owner.id))
+        self.assertFalse(body.get("can_manage"))
+
+    def test_match_detail_can_manage_for_owner_and_l2(self):
+        self.client.force_authenticate(self.owner)
+        res = self.client.get(f"/api/v1/sports/matches/{self.scheduled.id}/")
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertTrue(res.json().get("can_manage"))
+
+        level2 = User.objects.create_user(
+            email="l2-can-manage@test.com",
+            username="l2_can_manage",
+            password="SecurePass123!",
+            organization=self.org,
+            admin_level=2,
+        )
+        self.client.force_authenticate(level2)
+        res = self.client.get(f"/api/v1/sports/matches/{self.scheduled.id}/")
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertTrue(res.json().get("can_manage"))
 
     def test_tournament_owner_can_start_match(self):
         self.owner.sports_module_active = True

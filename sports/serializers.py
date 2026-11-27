@@ -11,7 +11,11 @@ BOGOTA_TZ = ZoneInfo("America/Bogota")
 def bogota_datetime_field(**kwargs):
     return serializers.DateTimeField(default_timezone=BOGOTA_TZ, **kwargs)
 
-from core.permissions import user_can_edit_team, user_is_module_super_admin
+from core.permissions import (
+    user_can_edit_team,
+    user_can_manage_match,
+    user_is_module_super_admin,
+)
 from .models import (
     Tournament,
     TournamentPhase,
@@ -545,7 +549,9 @@ class MatchListSerializer(serializers.ModelSerializer):
     home_team_logo = serializers.CharField(source="home_team.logo", read_only=True)
     away_team_logo = serializers.CharField(source="away_team.logo", read_only=True)
     tournament_name = serializers.CharField(source="tournament.name", read_only=True)
+    tournament_owner_id = serializers.UUIDField(source="tournament.posted_by_id", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    can_manage = serializers.SerializerMethodField()
 
     class Meta:
         model = Match
@@ -553,6 +559,8 @@ class MatchListSerializer(serializers.ModelSerializer):
             "id",
             "tournament",
             "tournament_name",
+            "tournament_owner_id",
+            "can_manage",
             "home_team",
             "home_team_name",
             "home_team_abbreviation",
@@ -578,6 +586,11 @@ class MatchListSerializer(serializers.ModelSerializer):
             "group",
         ]
 
+    def get_can_manage(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None) if request else None
+        return user_can_manage_match(user, obj)
+
 
 class MatchDetailSerializer(serializers.ModelSerializer):
     """Serializer detallado de partido con eventos"""
@@ -598,11 +611,17 @@ class MatchDetailSerializer(serializers.ModelSerializer):
     # Dueño del torneo (posted_by). El cliente los lee como owner_id / created_by.
     tournament_owner_id = serializers.UUIDField(source="tournament.posted_by_id", read_only=True)
     tournament_created_by = serializers.UUIDField(source="tournament.posted_by_id", read_only=True)
+    can_manage = serializers.SerializerMethodField()
     line_score = serializers.SerializerMethodField()
 
     class Meta:
         model = Match
         fields = "__all__"
+
+    def get_can_manage(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None) if request else None
+        return user_can_manage_match(user, obj)
 
     def get_line_score(self, obj):
         if obj.tournament.sport_type != "softball":
