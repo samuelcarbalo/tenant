@@ -3,9 +3,9 @@ services:
     name: tenant-api
     runtime: python
     plan: free
-    buildCommand: "mkdir -p staticfiles && pip install -r requirements.txt && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate --noinput --settings=config.settings.production && python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema && python manage.py ensure_payments_schema"
+    buildCommand: "mkdir -p staticfiles && pip install -r requirements.txt && python manage.py collectstatic --noinput --settings=config.settings.production && python manage.py migrate --noinput --settings=config.settings.production && python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema && python manage.py ensure_payments_schema && python manage.py ensure_sports_schema"
     # Aplicar migraciones ya commiteadas (nunca makemigrations en Render; ver README).
-    preDeployCommand: "python manage.py migrate --noinput --settings=config.settings.production && python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema && python manage.py ensure_payments_schema"
+    preDeployCommand: "python manage.py migrate --noinput --settings=config.settings.production && python manage.py ensure_ecommerce_schema && python manage.py ensure_jobs_schema && python manage.py ensure_payments_schema && python manage.py ensure_sports_schema"
     healthCheckPath: /healthz
     # Preferir gunicorn+uvicorn; si el panel sigue en Daphne, asgi.py ya maneja lifespan.
     startCommand: "gunicorn config.asgi:application -c gunicorn.conf.py"

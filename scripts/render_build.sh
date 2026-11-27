@@ -8,3 +8,7 @@ pip install -r requirements.txt
 python manage.py collectstatic --noinput --settings=config.settings.production
 python manage.py migrate ecommerce --noinput --settings=config.settings.production
 python manage.py migrate --noinput --settings=config.settings.production
+python manage.py ensure_ecommerce_schema --settings=config.settings.production
+python manage.py ensure_jobs_schema --settings=config.settings.production
+python manage.py ensure_payments_schema --settings=config.settings.production
+python manage.py ensure_sports_schema --settings=config.settings.production
