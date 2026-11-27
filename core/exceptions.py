@@ -51,10 +51,17 @@ def custom_exception_handler(exc, context):
     logger.exception("Unhandled API exception: %s", exc)
     if isinstance(exc, (DatabaseError, FieldError)):
         status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        message = (
-            "Servicio temporalmente no disponible. "
-            "Si el error persiste, verifica las migraciones de base de datos."
-        )
+        raw = str(exc)
+        if "FOR UPDATE cannot be applied to the nullable side of an outer join" in raw:
+            message = (
+                "No se pudo bloquear el registro para editarlo. "
+                "Reintenta; si persiste, contacta soporte."
+            )
+        else:
+            message = (
+                "Servicio temporalmente no disponible. "
+                "Si el error persiste, verifica las migraciones de base de datos."
+            )
         field = 'database'
     else:
         status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
